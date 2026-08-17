@@ -1,0 +1,253 @@
+# Baseline ladder rung 5 (MISSION 5.3): EEG foundation-model fine-tuning.
+# EEGPT (Wang et al., NeurIPS 2024), braindecode.models.InterpolatedEEGPT,
+# weights `braindecode/eegpt-pretrained` (25,287,168 backbone parameters).
+#
+#   python -m tactus.train.run -c configs/eegpt_ft.yaml --folds 0,9,18
+#
+# THIS IS AN INDICATIVE BASELINE, 3 FOLDS ONLY.  EEGPT is by far the best
+# geometric fit of the three foundation models on this rung, but "best fit" is
+# not "no mismatch": the three costs below are real and are reported, never
+# hidden.
+#
+# Use --folds 0,9,18, not --max-folds 3: the 40 folds are ordered video-fold
+# major, so --max-folds 3 would take vf00_sf00/sf01/sf02 -- three subject
+# groups against the SAME 18 test videos, holding the dominant variance
+# component constant.  0/9/18 is the diagonal (vf00_sf00, vf01_sf01,
+# vf02_sf02): three distinct video folds and three distinct subject groups.
+# (Same rule as configs/labram_ft.yaml, so the FM rungs stay comparable.)
+#
+# The encoder pulls its weights from the HF hub at construction time (once per
+# fold).  On a compute node with no outbound network, export HF_HUB_OFFLINE=1
+# or set model.eeg.params.local_files_only: true so it reads $HF_HOME straight
+# from cache instead of waiting on HEAD requests.
+#
+# ====================================================================== #
+# WHAT IS AND IS NOT PRETRAINED -- measured, not assumed                  #
+# ====================================================================== #
+#   backbone  25,287,168 params  100.000 % from the checkpoint (103/103
+#             tensors, including the 62-row channel embedding and the
+#             (512,1,1,64) patch-embedding kernel).  Verified tensor by
+#             tensor by fm_eegpt.load_pretrained_eegpt, which RAISES if the
+#             fraction drops below min_pretrained_fraction (0.999).
+#   projector  1,638,656 params  random, as on every rung.
+#   subject token  491,520 params  random, as on every rung.
+#
+# Note `EEGPT.from_pretrained("braindecode/eegpt-pretrained")` does NOT work
+# out of the box (braindecode 1.7.0):
+#     RuntimeError: size mismatch for chans_id: [1,62] vs [1,19]
+# because chan_proj_type defaults to "conv1d_constraint", which routes the
+# encoder through EEGPT's 19-channel probe montage.  And passing n_chans=64
+# raises `n_chans=64 different from chs_info=[...62 entries...]`, because the
+# hub config pins chs_info.  The wrapper passes chan_proj_type="none" and owns
+# the channel mapping itself; it also copies the checkpoint explicitly rather
+# than via from_pretrained, which loads with strict=False and would report
+# success even if nothing had loaded.
+#
+# ====================================================================== #
+# COST 1 -- SAMPLING RATE: pretrained at 250 Hz, our data is 200 Hz       #
+# ====================================================================== #
+# EEGPT was pretrained on corpora resampled to 250 Hz, where patch_size=64 is
+# a 256 ms patch and patch_stride=32 a 128 ms hop.  At our 200 Hz the same
+# convolution spans 320 ms / 160 ms: the model sees our signal 1.25x SLOWER
+# than anything it was trained on (a 10 Hz rhythm arrives looking like 8 Hz).
+#
+# DECISION: run NATIVE 200 Hz as the primary.  Resampling is available and
+# costs nothing in data terms (an upsample cannot alias, and the window stays
+# 0-600 ms), but it is a transformation no other rung applies, and the
+# frozen-feature probe below could not separate the two.  So we take the
+# minimal-intervention option and DOCUMENT the dilation rather than hide it.
+# The labelled sensitivity run is one line:
+#   python -m tactus.train.run -c configs/eegpt_ft.yaml --folds 0,9,18 \
+#       -o model.eeg.params.resample_sfreq=250 --tag sfreq250
+# (that variant reports patch_ms 256.0 instead of 320.0 and uses 4 patches.)
+#
+# ====================================================================== #
+# COST 2 -- CHANNELS: our 64 BioSemi vs EEGPT's canonical 62              #
+# ====================================================================== #
+# EEGPT indexes a 62-row channel embedding by ELECTRODE NAME.  Against
+# derived/channels.json:
+#     60 / 64 of our electrodes are in EEGPT's set -> passed through VERBATIM
+#      4 / 64 are not: P9, P10, Iz, AFz  -> EEGPT has no embedding for them
+#      2 EEGPT channels are absent from BioSemi-64: PO5, PO6
+#
+# channel_mode: interpolate  (InterpolatedEEGPT, interpolation_mode=name_match)
+# makes 60 rows of the 62x64 projection ONE-HOT -- bit-exact copies, no
+# smoothing of the channels EEGPT already knows -- and fills only PO5/PO6 with
+# a frozen MNE spherical-spline interpolation.  Total absolute weight the four
+# unmatched electrodes get in those two rows: Iz 0.036, P10 0.016, P9 0.014,
+# AFz 0.003.  In other words P9, P10, Iz and AFz are EFFECTIVELY DROPPED.
+# That is the cross-dataset channel-mapping cost MISSION section 9 asks to be
+# decided before the architecture is frozen; on frozen features the choice
+# barely matters (mean cosine between channel_mode=interpolate and
+# channel_mode=subset, i.e. no interpolation at all, is 0.999, against 0.733
+# between two different trials), so it is a cheap decision either way.
+# The third option, channel_mode=conv19, is braindecode's DEFAULT: a randomly
+# initialised Conv1d(64 -> 19) onto EEGPT's 19-channel probe montage.  It keeps
+# all 64 inputs but discards the pretrained topography and gives a genuinely
+# different representation (cos 0.755 vs the default, i.e. as different as a
+# different trial).  Not used.
+#
+# ====================================================================== #
+# COST 3 -- PATCH-GRID PADDING (the small one)                           #
+# ====================================================================== #
+# EEGPT needs (T - 64) % 32 == 0.  Our epochs:
+#     PRIMARY      w0600      120 ->  3 patches, 128 samples, PADDING 6.25 %
+#     SENSITIVITY  wm100_800  180 ->  5 patches, 192 samples, PADDING 6.25 %
+#     (resample 250)          150 ->  4 patches, 160 samples, PADDING 6.25 %
+# 6.25 %, against 40 % for LaBraM and CBraMod, both of which need a 1-second
+# 200-sample patch.  This is why EEGPT is the cleanest FM number on the ladder
+# -- but it is NOT "no padding at all", and the padding is not free:
+# braindecode's own fallback is nn.ConstantPad1d(..., 0.0), and our epochs
+# carry NO baseline correction, so |x| at the epoch edge averages 0.53 robust
+# sigma and a zero pad fabricates a step in the last patch.  The wrapper
+# therefore pads BEFORE the backbone with replicate/left (data first, the
+# 600 ms value held for the following 40 ms), which makes braindecode's pad a
+# no-op.  Measured on real trials, pad_mode is not a rounding error: features
+# at pad_mode=zeros have cosine 0.963 with the default and pad_align=center
+# 0.836 (reference: two DIFFERENT trials give 0.733).  Hence it is logged.
+#
+# ====================================================================== #
+# AMPLITUDE -- the one knob with no ground truth, and the largest effect  #
+# ====================================================================== #
+# input_scale: 0.01727 converts our robust-scaled units to MILLIVOLTS.  The
+# TARGET unit is INFERRED, not documented: neither the braindecode port nor the
+# HF model card states EEGPT's pretraining amplitude convention, and this model
+# family is split between mV (most) and 0.1 mV (LaBraM).  What is measured, two
+# independent ways, is the NUMBER:
+#   (a) physical -- derived/scaling/sub-*_robust.npz gives a median robust
+#       sigma of 17.3 uV over 80 subjects x 64 channels (p10 11.0, p90 28.9),
+#       so 1 unit = 17.3 uV = 0.0173 mV;
+#   (b) internal -- at input_scale=0.01727 the patch-embedding token RMS (0.023)
+#       matches EEGPT's pretrained channel-embedding RMS (0.0225) and its own
+#       patch-embedding bias almost exactly.  At input_scale=1.0 the data token
+#       is 20x the channel embedding, i.e. the spatial identity EEGPT's paper
+#       says carries its topography contributes ~0.2 % of the token variance.
+# A physical unit conversion and an internal magnitude balance landing on the
+# same number is the reason this is the default rather than 1.0 -- if EEGPT
+# actually pretrained in 0.1 mV the right value would be 0.1727, and (b) would
+# then be off by 10x, so (b) is the stronger of the two.  It is still the
+# least-constrained choice on
+# this rung: frozen features at input_scale 1.0 vs 0.1 have cosine 0.43, below
+# the 0.733 between two different trials, so this knob moves the representation
+# more than the trial does.  Report it; if there is budget, run both:
+#   -o model.eeg.params.input_scale=1.0 --tag rawunits
+#
+# ====================================================================== #
+# WHAT WE COULD NOT ESTABLISH -- read this before believing the defaults  #
+# ====================================================================== #
+# A frozen-feature split-half probe was run to try to choose between the
+# variants above on an OUTCOME rather than on principle.  sub-01, 90 conditions
+# x 8 repeats, split 4 + 4 into pseudo-trials (the project's own pseudo_k=4
+# unit), cosine retrieval of half B from half A among 90.  Chance top-1 1.11 %,
+# chance mean rank 45.5:
+#
+#   input_scale=1.0     native 200 Hz   top1 1.11 %   mean rank 44.8   d 0.0052
+#   input_scale=1.0     resampled 250   top1 1.11 %   mean rank 44.6   d 0.0034
+#   input_scale=0.01727 native 200 Hz   top1 2.22 %   mean rank 42.3   d 0.0147
+#   input_scale=0.01727 resampled 250   top1 1.11 %   mean rank 42.0   d 0.0162
+#     (d = mean same-condition cosine minus mean different-condition cosine)
+#
+# EVERY variant is at chance on top-1.  The FROZEN EEGPT representation carries
+# essentially no condition information this probe can detect on one subject.
+# The mean rank does split the two input scales the same way in both sampling
+# conditions (42.1 at mV vs 44.7 raw, against 45.5 chance) and d is ~3x larger
+# at mV, which is weak, CONSISTENT support for the calibration -- but 2/90 vs
+# 1/90 is not a result, and none of it says anything about what happens after
+# fine-tuning: this is the frozen encoder, which is exactly what fine-tuning is
+# meant to fix.
+#
+# So the defaults are chosen on A-PRIORI grounds -- match the pretraining unit
+# convention, minimal intervention on the time axis, leave the channels EEGPT
+# knows untouched -- and are NOT tuned to an outcome.  If this rung comes back
+# at chance, the frozen-probe result above is the first thing to quote, and
+# input_scale is the first thing to vary.
+
+base: default.yaml
+
+run:
+  name: eegpt_ft
+  notes: >
+    Ladder rung 5, INDICATIVE, 3 folds.  EEGPT (Wang et al., NeurIPS 2024)
+    fine-tuned end to end.  Backbone 100% from braindecode/eegpt-pretrained
+    (25.29M params, 103/103 tensors); projector and subject token random, as
+    on every rung.  w0600 padded 120 -> 128 samples (6.25% replicate padding)
+    onto EEGPT's 64/32 patch grid.  Documented mismatches: pretrained at
+    250 Hz vs our 200 Hz (patch is 320 ms here, 256 ms there, NOT corrected);
+    4 of our 64 electrodes (P9, P10, Iz, AFz) have no EEGPT channel embedding
+    and are effectively dropped; PO5/PO6 are spline-interpolated.
+
+data:
+  window: w0600            # PRIMARY.  wm100_800 is a LABELLED sensitivity run
+                           # only (it is baseline-contaminated by design), and
+                           # unlike LaBraM/CBraMod it buys EEGPT nothing: the
+                           # padding fraction is 6.25% either way.
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token   # same mechanism as nice_infonce, so the
+                                        # rung differs only in the EEG trunk
+  eeg:
+    name: eegpt
+    params:
+      pretrained: true          # false raises unless allow_random_init is set
+      hf_repo: braindecode/eegpt-pretrained
+      # local_files_only: true  # uncomment on a node with no outbound network
+                                # (or export HF_HUB_OFFLINE=1)
+
+      # --- the interface decision, all of it, in five keys ---------------
+      channel_mode: interpolate # interpolate | subset | conv19  (see COST 2)
+      resample_sfreq: null      # null = native 200 Hz; 250 = match pretraining
+      pad_mode: replicate       # replicate | zeros | reflect    (see COST 3)
+      pad_align: left           # data first, padding after the 600 ms window
+      input_scale: 0.01727      # robust sigma -> millivolts   (see AMPLITUDE)
+                                # = fm_eegpt.ROBUST_UNITS_TO_MILLIVOLTS; spelled out
+                                # here so the run log records the number, not a default.
+
+      # --- read-out -------------------------------------------------------
+      # EEGPT attends across CHANNELS within a patch and never across patches,
+      # so the patch axis carries all of its temporal structure; "flatten"
+      # (n_patches * embed_num * embed_dim = 3 * 4 * 512 = 6144) is the view
+      # EEGPT's own linear probe uses and the only pooling that keeps it.
+      # "mean_patch" (2048) or "mean" (512) shrink the random projector if the
+      # 1.64M-parameter head looks too big next to the 25.29M pretrained trunk.
+      pool: flatten
+      proj_hidden: 256          # pinned deliberately: default.yaml's
+      proj_dropout: 0.5         # model.eeg.params carries d_model/dropout for the
+                                # conv rung and those MERGE into this block; d_model
+                                # is an alias for proj_hidden and dropout for
+                                # proj_dropout, so spelling both canonically here
+                                # stops an inherited key from setting them silently.
+                                # (n_spatial_filters/temporal_kernel also leak in and
+                                # are dropped with a RuntimeWarning -- harmless, but
+                                # that warning in the log is expected, not a bug.)
+
+      # --- fine-tuning ----------------------------------------------------
+      freeze_backbone: false    # true reproduces EEGPT's OWN downstream
+                                # protocol (frozen encoder + trained probe) and
+                                # is the cheap ablation worth having
+      n_unfrozen_blocks: null   # e.g. 2 -> only the top 2 of 8 blocks train
+                                # (6.31M of 25.29M backbone params)
+      backbone_lr_scale: 0.1    # LIVE: trainer.py calls encoder.param_groups(lr, wd),
+                                # so the 25.29M pretrained trunk trains at
+                                # 0.1 x train.optimizer.lr and the random head at the
+                                # full LR.  Confirmed in the run log:
+                                #   encoder supplied 4 custom parameter group(s);
+                                #   LRs: [1e-05, 1e-05, 0.0001, 0.0001]
+
+train:
+  epochs: 30                 # half the conv rungs: 25M pretrained parameters
+                             # converge (and overfit) far faster than 0.33M
+                             # random ones, and this rung is indicative, not a
+                             # like-for-like budget comparison.
+  optimizer:
+    lr: 1.0e-4               # NOT the 3e-4 of the conv rungs.  1e-4 is the
+                             # conventional fine-tuning value, chosen a priori and
+                             # not tuned; with backbone_lr_scale=0.1 the pretrained
+                             # trunk therefore steps at 1e-5 and the random head at
+                             # 1e-4.
+  batch:
+    size: 72                 # NB the trainer clamps this to the number of distinct
+                             # base videos in the split (56 on fold 0) in
+                             # mode=distinct_video -- same for every rung, but it
+                             # means the realised batch is 56, not 72.
+    mode: distinct_video

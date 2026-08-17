@@ -1,0 +1,221 @@
+# =============================================================================
+# Baseline-ladder rung 5: EEG FOUNDATION MODEL (CBraMod), INDICATIVE ONLY.
+#
+#   python -m tactus.train.run -c configs/cbramod_ft.yaml --folds 0,8,16
+#
+# USE --folds 0,8,16, NOT --max-folds 3.  The 40 double-disjoint folds are
+# ordered video-fold-major, so `--max-folds 3` returns vf00_sf00 / vf00_sf01 /
+# vf00_sf02 -- three SUBJECT folds inside ONE video split.  The primary endpoint
+# is video-disjoint retrieval and the inference unit is the base video, so three
+# folds that all share a video split sample none of the variance that matters.
+# `--folds 0,8,16` gives vf00_sf00 / vf01_sf00 / vf02_sf00: three DIFFERENT video
+# splits, one subject split each.  (Even so: 3 folds, indicative only, no
+# video-level permutation p and no fraction-of-ceiling.)
+#
+# CBraMod (Wang et al., ICLR 2025), braindecode.models.CBraMod, TUEG-pretrained
+# weights from the HF hub repo `braindecode/cbramod-pretrained`.
+#
+# PROVENANCE OF THE WEIGHTS (verified, not assumed)
+#   backbone parameters            4,924,000
+#   from the checkpoint            4,924,000  (211/211 tensors, BIT-EXACT)
+#   pretrained fraction            1.000
+# The wrapper is built with `return_encoder_output=True`, which replaces CBraMod's
+# classification head with nn.Identity, so the backbone contains ZERO randomly
+# initialised tensors.  Every new parameter is in the TACTUS projector/conditioner.
+# CBraModEncoder re-verifies this at construction by re-reading the cached
+# model.safetensors and comparing tensor-by-tensor; a mismatch raises, and a
+# missing checkpoint raises unless model.eeg.params.allow_random_init is set.
+# Read `describe()["pretrained"]` in the run log before quoting any number.
+#
+# -----------------------------------------------------------------------------
+# THE PATCH / EPOCH-LENGTH MISMATCH -- DOCUMENTED, NOT HIDDEN
+# -----------------------------------------------------------------------------
+# CBraMod's temporal patch is 200 samples = 1.0 s at 200 Hz and it is BAKED INTO
+# THE PRETRAINED WEIGHTS: `patch_embedding.spectral_proj.0.weight` is (200, 101),
+# i.e. it consumes the rfft of a 200-sample patch, and `proj_in` maps 200 samples
+# to 8 temporal positions.  Lowering patch_size would throw those weights away.
+# Unlike LaBraM -- which silently shrinks its patch to n_times and thereby
+# silently abandons its pretrained patch embedding -- CBraMod raises on a
+# non-multiple length (einops: "can't divide axis of length 120 in chunks of
+# 200").  We keep that honesty and PAD; we never re-patch.
+#
+#   window                n_times  padded  PADDING FRACTION
+#   w0600  (PRIMARY)        120      200   40.0 %   <- what this config runs
+#   wm100_800 (sensitivity) 180      200   10.0 %
+#
+# DECISION: run the PRIMARY window w0600 and accept 40 % padding.
+#   Rung 5 asks "does a TUEG-pretrained EEG transformer beat our 0.33 M conv on
+#   THIS task".  That is only interpretable if it sees the same 0-600 ms as every
+#   other rung.  Buying the cheaper 10 % padding by switching to wm100_800 would
+#   confound "foundation model vs conv" with "window A vs window B", and would
+#   hand this rung alone the -100..0 ms baseline the blueprint deliberately
+#   refuses to subtract (it carries the PREVIOUS trial's late response).
+#   Consequence, stated up front: with two fifths of every patch synthetic, this
+#   is a PESSIMISTICALLY BIASED probe of CBraMod.  A negative result at rung 5 is
+#   a statement about the interface at least as much as about the model.
+#   To run the labelled sensitivity arm instead:
+#     python -m tactus.train.run -c configs/cbramod_ft.yaml --max-folds 3 \
+#         --override data.window=wm100_800 --tag w180pad10
+#
+# PADDING SCHEME: measured, on sub-01 w0600 real trials, backbone features
+# (128 trials, pretrained weights, no projector).  Between-trial cosine baseline
+# is 0.087, i.e. features of different trials are near-orthogonal, so:
+#   same trial, different pad VALUE   cosine 0.69-0.88   RDM Pearson r 0.82-0.90
+#   same trial, different pad SIDE    cosine 0.25-0.31   RDM Pearson r 0.76-0.80
+# Reading: the padding VALUE is a second-order but non-negligible nuisance (it
+# moves 10-18 % of the trial-geometry variance retrieval reads); the padding
+# POSITION -- where the real 600 ms sits inside the 200-sample patch -- is
+# FIRST-order.  Both are therefore fixed a priori and must not be varied
+# mid-ladder.  Chosen a priori on signal-processing grounds, not on downstream
+# score: `reflect` + `right`.
+#   - the epochs carry NO baseline correction, so a trial-channel's DC level is
+#     not zero (mean |per-trial-channel median| 0.42 vs mean within-trial SD
+#     0.49).  Zero-padding splices in a ~1-SD step, which the rfft branch reads
+#     as broadband leakage -- `zero` is the worst option, kept only so the
+#     sensitivity above can be MEASURED rather than asserted.
+#   - symmetric (reflect) extension is the standard short-segment extension: it
+#     is value- and slope-continuous at the seam and preserves the segment
+#     spectrum.  `replicate` (DC hold) and `median` are the alternatives.
+#   - `right` keeps the stimulus-locked 0-600 ms at the START of the patch.
+#
+# TimeWindowHeads sub-windows would be 75-85 % padding (30/40/50 samples -> 200).
+# They run and satisfy contract F, but a CBraMod onset curve is not meaningful
+# and must not be reported.
+#
+# -----------------------------------------------------------------------------
+# TWO THINGS THIS CONFIG CANNOT DO YET (do not claim them in the writeup)
+# -----------------------------------------------------------------------------
+# 1. DISCRIMINATIVE LR.  `backbone_lr_scale` is honoured only by
+#    CBraModEncoder.param_groups(), which tactus.train.trainer.Trainer does not
+#    call -- it builds its own two decay/no-decay groups at a single train.
+#    optimizer.lr.  Until that is wired in, FREEZING is the only fine-tuning
+#    control with any effect, and describe() reports
+#    "backbone_lr_scale_applied": false so a run log cannot claim otherwise.
+# 2. REGISTRATION.  tactus/models/eeg/__init__.py must import the module or the
+#    @register_eeg_encoder decorator never runs and this config dies with
+#    "unknown EEG encoder 'cbramod'".  One line, owned by the parent:
+#        from .fm_cbramod import CBraModEncoder   # noqa: F401
+#
+# EXPECTED, BENIGN, DO NOT "FIX":
+#   RuntimeWarning: build_eeg_encoder('cbramod'): ignoring config keys not
+#   accepted by CBraModEncoder: ['n_spatial_filters', 'temporal_kernel']
+# `_merge_layer` in tactus/train/run.py deep-merges everything except the `loss`
+# block, so default.yaml's tsconv-specific model.eeg.params survive into this
+# config and are dropped at construction.  Two of default.yaml's keys are NOT
+# dropped, and that is intentional: `d_model: 256` -> proj_hidden and
+# `dropout: 0.5` -> proj_dropout (both re-stated explicitly below).  CBraMod's
+# own internal dropout is the separate `drop_prob`.
+#
+# NOT VERIFIABLE FROM THE LOGIN NODE (no GPU here, and this task may not sbatch):
+#   CBraMod's patch embedding calls torch.fft.rfft.  Under CPU autocast, bf16 and
+#   fp16 both work (rfft is promoted to fp32, output complex64) and the backward
+#   pass is finite -- checked.  The CUDA autocast policy list is the same list, so
+#   train.amp: bf16 is expected to work, but it is UNTESTED on device.  If the
+#   first GPU fold dies inside torch.fft, rerun with `-o train.amp=off`.
+#   Also: bf16 has no hardware support before Ampere, so schedule this on A100 /
+#   A30, or switch to `-o train.amp=fp16` on the V100/P100 partitions.
+# =============================================================================
+
+base: default.yaml
+
+run:
+  name: cbramod_ft
+  notes: >
+    Rung 5, INDICATIVE ONLY, 3 folds.  CBraMod (ICLR 2025) TUEG-pretrained
+    backbone (4.92 M params, 100 % from braindecode/cbramod-pretrained, verified
+    bit-exact) + the TACTUS residual projector, plain InfoNCE (safe only because
+    batch.mode=distinct_video makes same-condition false negatives impossible)
+    against the frozen per-condition SigLIP2 embedding.  The 0-600 ms epoch (120
+    samples) is reflect-padded on the right to CBraMod's pretrained 200-sample
+    patch: 40 % of every patch is synthetic.  This is a pessimistically biased
+    probe of the foundation model and is NOT a like-for-like comparison against
+    the conv rungs; it answers "is a pretrained EEG transformer worth a proper
+    interface study", not "conv vs transformer".
+
+data:
+  window: w0600            # PRIMARY.  See the padding decision above.
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: cbramod
+    params:
+      # --- provenance -------------------------------------------------------
+      pretrained: true
+      hf_repo: braindecode/cbramod-pretrained
+      verify_pretrained: true   # re-read model.safetensors, compare bit-exact
+      allow_random_init: false  # a random CBraMod is not a foundation model
+
+      # --- the interface (frozen a priori; do not tune) ----------------------
+      patch_size: 200           # pretrained; changing it raises when pretrained
+      pad_to: 200               # 120 -> 200, padding fraction 0.40
+      pad_mode: reflect         # reflect | replicate | median | zero
+      pad_side: right           # keeps 0-600 ms at the start of the patch
+      input_scale: 1.0          # epochs are already ~unit variance
+
+      # --- fine-tuning ------------------------------------------------------
+      # Default arm: full fine-tune of the 4.92 M backbone with the patch
+      # embedding FROZEN.  The patch embedding is the one part that reads the
+      # synthetic 40 %; letting it adapt lets the model learn the padding
+      # artifact instead of the ERP.  The transformer above it stays free.
+      freeze_backbone: false
+      freeze_patch_embedding: true
+      unfreeze_last_n: null     # e.g. 2 -> only the last 2 criss-cross blocks
+      backbone_lr_scale: 0.1    # LIVE: Trainer._build calls encoder.param_groups(lr, wd)
+      #                         # and prepends the returned groups, so the backbone
+      #                         # trains at 0.1x the projector LR and the cosine
+      #                         # schedule scales both proportionally.
+
+      # --- read-out ---------------------------------------------------------
+      # "flatten" = CBraMod's own downstream recipe: 64 chans x 1 patch x 200 =
+      # 12800 features.  NOTE: with subject_conditioning=sulora this projector
+      # costs ~8.7 M extra adapter params; use feature_pool: channel_mean (200)
+      # for the SuLoRA arm.
+      feature_pool: flatten
+      proj_blocks: 1
+      proj_dropout: 0.5
+      drop_prob: 0.1
+
+loss:
+  name: infonce
+  temperature: 0.04
+  learnable_temperature: true
+  direction: both
+  label_smoothing: 0.0
+
+train:
+  # A pretrained transformer converges far faster than the from-scratch conv
+  # (the CBraMod paper reports usable results after 1 epoch, convergence by
+  # ~10), and a 12-layer transformer at lr 3e-4 destroys its pretrained weights
+  # in the first few hundred steps.  Shorter schedule, an order of magnitude
+  # lower LR, longer warmup.
+  epochs: 30
+  batch:
+    size: 72
+    mode: distinct_video
+  optimizer:
+    lr: 3.0e-5
+    weight_decay: 0.05
+  scheduler:
+    warmup_epochs: 3
+  early_stop:
+    patience: 8
+
+eval:
+  # INDICATIVE ONLY: the blueprint budgets 3 folds for this rung, so the
+  # video-level permutation test and the fraction-of-ceiling column are NOT
+  # available here.  The numbers are a scouting signal, never a reported endpoint.
+  #
+  # regime is within_subject, for two reasons:
+  #   1. comparability -- every other rung of the ladder (nice_infonce,
+  #      nice_protonce, atm_composite, linear_align) reports within_subject, so a
+  #      double_disjoint number here would not be commensurable with them;
+  #   2. safety -- make_folds emits double_disjoint video-fold-major
+  #      (for v in range(5): for s in range(8)), so taking the FIRST THREE folds
+  #      of that regime scores the SAME 18 held-out videos three times and
+  #      samples zero stimulus variance.  Under within_subject, folds 0/1/2 are
+  #      three genuinely different video splits.  If you ever do want three
+  #      double_disjoint cells, select them with
+  #      tactus.data.splits.fold_run_order() rather than by truncation.
+  regime: within_subject

@@ -1,0 +1,280 @@
+# Trial-count scaling curve: do the 230,400 single trials buy anything?
+#
+# The subject-count curve (train.n_train_subjects = 10/20/40/79) has existed
+# since day one.  There has never been a trial-count knob, so reason (1) of the
+# two the PI gives for this dataset has never been tested.  This config is that
+# test.
+#
+# WHAT MOVES:       train.train_trial_frac, a subsample of the TRAINING trials.
+# WHAT NEVER MOVES: the test fold and the inner validation split.  The subsample
+#   is applied *after* the split, so every point of the curve is scored on
+#   literally the same rows.  Each fold writes eval_fingerprint.json holding a
+#   sha1 over the raw bytes of the test trial_uid array; every arm must match.
+#
+# The subsample is stratified over the (subject x condition) design and NESTED:
+# the 1/8 set is a subset of the 1/4 set is a subset of the 1/2 set.  The curve
+# therefore measures *added data*, not four independent draws.
+#
+# ------------------------------------------------------------------------------
+# THE FOUR CONFOUNDS, and what this config does about each.
+# Every number below is MEASURED, not asserted.  Two sources, both real:
+#   [80s] the actual within_subject fold vf00 over all 80 subjects -- 88,565
+#         training trials after the inner val split, val 25,284, test 43,183,
+#         17,916 (subject, condition) cells, 56 distinct base videos, 224
+#         conditions, 1514 batches/epoch at frac=1.  Split + subsample computed
+#         for real; no training (that is the parent's GPU job).
+#   [4s]  a 2-epoch end-to-end CPU run of this exact config on subjects 1-4,
+#         which is what proves the plumbing rather than any accuracy.
+# ------------------------------------------------------------------------------
+# (a) OPTIMIZER STEPS.  Fewer trials at fixed epochs = fewer steps, and a cosine
+#     schedule squeezed into that smaller budget.  `train.steps_per_epoch: full`
+#     pins every arm to the batch count the un-subsampled training split of the
+#     SAME fold produces, re-walking the smaller pool as often as needed.
+#     MEASURED [4s]: 70 batches/epoch and 140 optimizer steps at every fraction,
+#     and the logged LR is identical to the last digit across arms
+#     (1.5214285714285712e-04 at epoch 0, 3.0e-04 at epoch 1).  Passes over the
+#     pool per epoch: 1.00 / 2.19 / 4.38 / 14.00 at frac 1 / 1/2 / 1/4 / 1/8.
+#     MEASURED [80s]: one pass over the training split yields 1514 / 744 / 366 /
+#     179 batches at frac 1 / 1/2 / 1/4 / 1/8, so WITHOUT this knob the 1/8 arm
+#     would get 8.5x fewer updates -- and note 179 is not 1514/8, because
+#     distinct_video + drop_last also truncates each pass harder as the pool
+#     thins.  With steps_per_epoch: full every arm runs 1514.
+#     Also run the epoch-matched arm (steps_per_epoch: null).  The gap between
+#     the two IS the "is it data or is it training time" answer; reporting only
+#     one of them answers neither.
+#     COST WARNING: step-matched means the 1/8 arm costs the same GPU hours as
+#     the 1/1 arm.  Budget 4 equal-cost runs, not 1 + 1/2 + 1/4 + 1/8.
+#
+# (b) PSEUDO-TRIALS.  The curriculum's anchor averages k=4 repeats from one
+#     (subject, condition) cell.  TrialView degrades silently -- it takes
+#     min(k-1, n_cell-1) partners -- so a subsample does not crash, it lowers k.
+#     MEASURED [80s] realised k (trial-weighted mean of min(n_cell, 4)) on the
+#     real 17,916-cell training split of fold vf00:
+#         frac 1     k = 3.90    2,604/17,916 cells below k
+#         frac 1/2   k = 2.71   16,513/17,865 cells below k
+#         frac 1/4   k = 1.46   17,020/17,020 cells below k (896 cells emptied)
+#         frac 1/8   k = 1.00   11,067/11,067 cells below k (6,849 cells emptied)
+#     ([4s] reproduces this to two decimals: 3.90 / 2.70 / 1.47 / 1.00.)
+#     So at frac <= 1/4 the objective is NOT the pre-registered one, and a naive
+#     curve would read "curriculum turned off" as "less data".  Note the k=4
+#     curriculum is already only 3.90-realised at FULL data in this regime --
+#     the D1 embargo plus the inner val split leave ~4.9 trials per cell, not 8.
+#     THIS IS THE CONFOUND THAT ACTUALLY BITES.  It is not fixable by logging.
+#     Sharpest demonstration [4s]: at frac 1/8, the arm with the curriculum ON
+#     and the arm with `curriculum.enabled=false` produce the IDENTICAL number
+#     (test/video/g18/top1_pseudo = 0.06399 in both).  Turning the curriculum
+#     off changes nothing at 1/8 because the subsample already turned it off.
+#     Two controls, both provided.
+#     `_k1` arms -- curriculum off at every fraction, so ONE objective (k=1)
+#       spans the whole curve.  Costs the match to the pre-registered recipe at
+#       f=1, buys a curve where the objective cannot drift.
+#     `trial_subsample.unit: cell` -- keep WHOLE cells (all their repeats) for
+#       proportionally fewer cells.  MEASURED [80s] at 80 subjects this holds
+#       everything else too: mean k = 3.91 at BOTH f=1/4 and f=1/8, all 224
+#       conditions, all 56 base videos, batch 56.  What varies is only how many
+#       of the 17,916 (subject, condition) pairs are trained on (4,446 at 1/4,
+#       2,223 at 1/8).  It is the cleanest arm on the grid, but it answers a
+#       different question -- "cover more cells" rather than "average more
+#       repeats" -- so run it WITH the default, not instead of it.
+#       (Do not judge unit=cell from a 4-subject smoke run: at [4s] it collapses
+#       to 51 videos / 84 conditions, which is a small-sample artefact and does
+#       not happen at 80.)
+#     Every fold logs cells_below_k / mean_k_avail; every epoch logs
+#     train/k_realised (the k the curriculum actually got, vs the k it asked
+#     for).  MEASURED [4s]: requested k=4 -> realised 3.78 / 2.62 / 1.44 at
+#     frac 1 / 1/2 / 1/4.
+#
+# (c) EA WHITENER + ROBUST SCALER.  Fit per subject from training trials, capped
+#     at data.scaling.fit_trials=512.  The inner val split is never subsampled
+#     and it feeds this fit, which puts a floor under the damage.
+#     MEASURED [4s] median trials/subject actually used: 512 / 512 / 512 / 464.
+#     MEASURED [80s] trials available per subject to fit with (train subsample +
+#     the full val split): 1,423 / 870 / 593 / 454, i.e. capped at 512 down to
+#     frac 1/4 and only degrading at 1/8 -- and then by 11%, not by 8x, because
+#     the untouched val split carries most of the fit.  Confound (c) is real but
+#     small; do not let it carry the story.  `data.scaling.fit_source: full_train` fits
+#     from the full training split at every fraction; run it at 1/8 and 1/4 to
+#     price the confound.
+#
+# (d) BATCH COMPOSITION.  batch.mode=distinct_video needs one trial per distinct
+#     base video and the sampler clamps batch.size to the number of distinct
+#     training videos, which would silently change the n-way of the in-batch
+#     softmax.  MEASURED [80s]: 56 distinct training videos AND all 224
+#     conditions survive at every fraction down to 1/8, and the realised batch
+#     size is 56 throughout -- identical to frac=1.  ([4s] the same, except 5 of
+#     224 conditions are lost at 1/8, an artefact of having only 4 subjects; no
+#     base video is ever lost, because a video survives if any one of its four
+#     orientations does.)  Stratifying over (subject x condition) is what buys
+#     this.  `trial_subsample.stratify: none` is kept so the cost of NOT doing
+#     it is measurable rather than arguable.  MEASURED [80s] at f=1/8, flat vs
+#     stratified: 9,451 vs 6,849 (subject, condition) cells emptied, and a
+#     per-cell kept count that ranges 0-6 instead of 0-1.  The flat draw is not
+#     uniformly worse -- it trades cell coverage for cell depth, which is why
+#     its mean k (1.54) is HIGHER than the stratified draw's (1.00) at the same
+#     trial count.  It just does so uncontrollably, so the arm is a different
+#     experiment at every fraction.  Both hold 56 videos / 224 conditions at 80
+#     subjects, so (d) survives either way; it is the design that does not.
+#
+# ------------------------------------------------------------------------------
+# HOW TO RUN.  within_subject = 5 video folds per arm (this is the regime the
+# reference numbers come from: InfoNCE 10.99%, ProtoNCE 11.93%, chance 5.56%,
+# split-half ceiling ~17-18%, EA+ridge floor 10.09%).
+# ------------------------------------------------------------------------------
+#   PRIMARY, step-matched -- 4 arms x 5 folds:
+#     for f in 0.125 0.25 0.5 1.0; do
+#       python -m tactus.train.run -c configs/trial_scaling.yaml \
+#         --override train.train_trial_frac=$f --tag f$f
+#     done
+#
+#   OBJECTIVE-CONSTANT companion (recommended as the arm to READ the data effect
+#   off, because confound (b) cannot bite it) -- 4 arms x 5 folds:
+#     ... train.train_trial_frac=$f train.curriculum.enabled=false --tag f${f}_k1
+#
+#   EPOCH-MATCHED companion (steps scale with the data; cheap at low fractions):
+#     ... train.train_trial_frac=$f train.steps_per_epoch=null --tag f${f}_ep
+#
+#   CONTROLS, only worth running at 0.125 and 0.25 where the confounds bite:
+#     ... data.scaling.fit_source=full_train      --tag f${f}_fitfull
+#     ... train.trial_subsample.unit=cell         --tag f${f}_cellunit
+#     ... train.trial_subsample.stratify=none     --tag f${f}_flat
+#
+#   f=1.0 is NOT a no-op arm to skip.  It is the anchor the other three are read
+#   against and it must be run from THIS config: the val split, seed and
+#   fingerprints have to be the same object.  At f=1.0 `steps_per_epoch: full`
+#   is provably inert -- VERIFIED [4s] that f1.0 (step-matched) and e1.0
+#   (steps_per_epoch=null) produce bit-identical metrics
+#   (test/video/g18/top1_pseudo = 0.049891540130151846 in both, best_monitor
+#   0.07860262008733625 in both), so the anchor is an ordinary run.
+#
+#   READ THE CURVE from results/runs/<name>_f*/summary_folds.csv, which now
+#   carries, next to every metric: n_train, n_train_full, train_trial_frac,
+#   steps_per_epoch, optimizer_steps, step_matching, passes_per_epoch,
+#   train_batch_size, n_train_videos, cells_below_k, frac_anchors_below_k,
+#   mean_k_avail, transform_fit_median, test_uid_sha1, val_uid_sha1.
+#   test_uid_sha1 must be constant within a fold across all arms.  If it is not,
+#   the arms are not comparable and nothing else in the table means anything.
+#   Per-fold detail is in folds/*/trial_subsample.json and eval_fingerprint.json.
+#
+#   DO NOT go below 1/8 with unit=trial: at 1/16 most cells are empty and the
+#   design stops being the design.  If a smaller budget is wanted, use
+#   unit=cell, which stays balanced (whole cells) all the way down.
+#
+# ------------------------------------------------------------------------------
+# MEASURED [80s] -- what the parent's runs will actually see (fold vf00, all 80
+# subjects; split and subsample computed for real, no training):
+#   frac    n_train  cells   cells<k  meank  vids  conds  batch/pass  EAfit/subj
+#   1.000    88565   17916     2604   3.90    56    224        1514         512
+#   0.500    44282   17865    16513   2.71    56    224         744         512
+#   0.250    22141   17020    17020   1.46    56    224         366         512
+#   0.125    11071   11067    11067   1.00    56    224         179         454
+#   test set: 43,183 trials, sha1 f48460138b09b380b5b5db62571a53700ae931e4
+#   (constant across every arm -- check it)
+#
+#   Exactness and nesting VERIFIED on all five real folds, 80 subjects:
+#     vf00  n_train 88565  kept 11071 / 22141 / 44282   exact=True  nested=True
+#     vf01  n_train 88632  kept 11079 / 22158 / 44316   exact=True  nested=True
+#     vf02  n_train 87087  kept 10886 / 21772 / 43544   exact=True  nested=True
+#     vf03  n_train 87071  kept 10884 / 21768 / 43536   exact=True  nested=True
+#     vf04  n_train 88542  kept 11068 / 22136 / 44271   exact=True  nested=True
+#   ("exact" = len(kept) == round(frac * n_train) to the trial; "nested" =
+#    strict subset chain 1/8 < 1/4 < 1/2 < full.)
+#
+# MEASURED [4s] -- the end-to-end plumbing check (fold vf00, subjects 1-4, 2
+# epochs, CPU).  A PLUMBING CHECK, NOT A RESULT: 2 epochs on 4 subjects cannot
+# resolve 5.56% chance, so do not read its accuracies as anything.
+#   frac    n_train  steps  opt_steps  passes  batch  vids  cells  meank  EAfit  n_test
+#   1.000     4421     70      140      1.00    56     56    896   3.90    512    2165
+#   0.500     2210     70      140      2.19    56     56    896   2.70    512    2165
+#   0.250     1105     70      140      4.38    56     56    848   1.47    512    2165
+#   0.125      553     70      140     14.00    56     56    553   1.00    464    2165
+#   test sha1 c53431b8cb... and val sha1 8cf8105026... identical in all arms.
+#   train.n_train_trials=800 also verified end-to-end: realised exactly 800.
+# ------------------------------------------------------------------------------
+
+base: default.yaml
+
+run:
+  name: trial_scaling
+  seed: 0
+  split_seed: 0            # fold construction identical to every other run
+  notes: >
+    Trial-count scaling curve. train.train_trial_frac subsamples TRAINING trials
+    only, stratified over (subject x condition) and nested across fractions.
+    Evaluation and the inner validation split are fixed and complete at every
+    point; eval_fingerprint.json proves it per fold.
+
+data:
+  scaling:
+    # subsample  -> the EA whitener and robust scaler see only the trials this
+    #               arm is allowed to have (honest; the default)
+    # full_train -> fit them from the full training split at every fraction
+    #               (isolates the effect on the objective)
+    fit_source: subsample
+
+train:
+  # ---- the knob -------------------------------------------------------------
+  # null = no subsampling.  Set per arm on the command line:
+  #   --override train.train_trial_frac=0.125 | 0.25 | 0.5 | 1.0
+  # n_train_trials is the absolute-count alternative; it is exact and it WINS if
+  # both are set.  Use it to match trial counts across regimes whose training
+  # splits differ in size.
+  train_trial_frac: null
+  n_train_trials: null
+
+  trial_subsample:
+    stratify: subject_condition   # subject_condition | subject_video | subject |
+                                  # condition | video | none   ("none" is the
+                                  # flat random draw, kept as a control)
+    unit: trial                   # trial = thin every (subject, condition) cell.
+                                  #   All cells stay, their repeats shrink, and
+                                  #   so does the realised k (3.90 -> 1.00).
+                                  # cell  = keep whole cells, fewer of them.
+                                  #   k stays 3.91 and all 224 conditions / 56
+                                  #   videos stay; the (subject, condition) cell
+                                  #   COUNT shrinks (17,916 -> 2,223 at 1/8).
+    include_val: false            # true also shrinks the inner val split, which
+                                  # makes checkpoint selection noisier exactly
+                                  # where the curve is weakest. Leave false.
+    min_per_cell: 0               # >0 forces a floor of repeats per cell
+    seed_salt: 8821               # change only to redraw the entire curve
+
+  # ---- confound (a): hold the optimizer-step budget constant -----------------
+  # "full" = match the batch count of the un-subsampled training split of the
+  # same fold.  null = one pass over the subsample (the epoch-matched arm).
+  # An integer pins an explicit budget across folds as well as fractions.
+  steps_per_epoch: full
+
+  epochs: 60
+
+  batch:
+    size: 72                 # clamped to the distinct training videos
+    mode: distinct_video
+    drop_last: true
+
+  curriculum:
+    enabled: true            # false for the `_k1` arms: one objective across
+                             # the whole curve, at the cost of not matching the
+                             # pre-registered recipe at f=1
+    mode: prob_mix
+    k_start: 4
+    anneal_epochs: 12
+
+  val:
+    mode: video
+    video_frac: 0.2
+    pseudo_k: 4
+
+  early_stop:
+    monitor: val/top1_pseudo
+    patience: 10             # with steps_per_epoch: full an "epoch" is a fixed
+                             # step budget, so patience means the same thing at
+                             # every fraction -- which is the point
+
+eval:
+  regime: within_subject     # the regime the 230k-trial claim and the reference
+                             # numbers live in; double_disjoint is a separate
+                             # question and a separate 40-fold bill
+  primary_metric: test/video/g18/top1_pseudo
+  pseudo_k: 4
+  pseudo_resamples: 5
+  save_embeddings: true

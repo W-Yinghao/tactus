@@ -1,0 +1,92 @@
+# ATM-style encoder + composite objective (the full lambda ladder).
+#
+#   L = L_crossmodal + l1 * L_clisa + l2 * L_rnc(valence) + l3 * L_attribute
+#
+# Read the caveat before believing any gain here.  The CLISA cross-subject term
+# is PARTLY REDUNDANT with the cross-modal term: a fixed video anchor already
+# pulls different subjects' responses to the same condition together, so l1's
+# net contribution has to be ablated on its own before it can be claimed.  That
+# ablation is the point of this config, not the composite headline number.
+#
+# Batch composition changes here on purpose: CLISA needs same-condition
+# positives from DIFFERENT subjects inside one batch, which distinct_video
+# sampling never produces.  video_x_subject builds 24 videos x 3 subjects.
+# The losses are responsible for masking the duplicate videos this reintroduces.
+#
+#   python -m tactus.train.run -c configs/atm_composite.yaml
+#   python -m tactus.train.run -c configs/atm_composite.yaml \
+#       --override loss.components.clisa.weight=0.0 --tag no_clisa   # the l1 ablation
+
+base: default.yaml
+
+run:
+  name: atm_composite
+  notes: >
+    ATM-style encoder with a composite objective; exists primarily to run the
+    lambda-1 redundancy ablation (CLISA vs cross-modal) and the continuous
+    valence-axis term.
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: atm
+    params:
+      d_model: 256
+      n_heads: 8
+      depth: 2
+      dropout: 0.3
+      # NOTE: `patch_len: 20` used to live here and was silently discarded with a
+      # RuntimeWarning -- ATMEncoder has no such parameter.  Its attention runs
+      # over channel tokens, and the temporal granularity knob is
+      # `n_summary_bins` (default 32 bins over the 120-sample w0600 window).
+      # Set that instead if you want coarser temporal patches.
+
+# Each component is {weight: w, ...constructor kwargs}; `weight: 0.0` is the
+# ablation cell.  `warmup_steps` ramps a term in linearly, which keeps the
+# auxiliary losses from dominating before the cross-modal term has any geometry
+# to work with.
+loss:
+  name: composite
+  normalize_weights: false
+  components:
+    # the main term -- masked, because video_x_subject batching puts repeated
+    # conditions in the same batch on purpose
+    infonce:
+      name: masked_infonce
+      weight: 1.0
+      temperature: 0.04
+      direction: both
+    # lambda_1: cross-subject alignment. Partly redundant with the term above;
+    # its net contribution is the thing this config exists to measure.
+    clisa:
+      weight: 0.2
+      temperature: 0.07
+      positive_key: condition_id
+      require_different_subject: true
+      sequence_scope: subject
+      mask_same_video_negatives: true
+      warmup_steps: 500
+    # lambda_2: continuous valence axis (Rank-N-Contrast) on the EEG side
+    rnc:
+      weight: 0.1
+      label_key: valence
+      feature: eeg
+      temperature: 2.0
+    # lambda_3: attribute anchor. Material is the only attribute whose class
+    # structure is usable on 90 videos (8 classes); touch_type's 12 classes are
+    # not stratifiable here.
+    supcon:
+      weight: 0.05
+      positive_key: material_id
+      mode: eeg_only
+      temperature: 0.1
+
+train:
+  epochs: 60
+  batch:
+    size: 72
+    mode: video_x_subject
+    subjects_per_video: 3
+  optimizer:
+    lr: 2.0e-4

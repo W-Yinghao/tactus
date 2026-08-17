@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# TACTUS repository: code and documents only.
+#
+# Everything the pipeline derives lives under $TACTUS_WORK
+# (/projects/EEG-foundation-model/tactus_work) and never in git: 108 GB of raw
+# BDF, 17 GB of epoch memmaps, video-embedding caches, run checkpoints.
+# ---------------------------------------------------------------------------
+
+# derived data and run artifacts
+work/
+data/
+results/
+*.npy
+*.npz
+*.parquet
+*.fif
+*.bdf
+*.pt
+*.safetensors
+
+# generated at submit time from slurm/cluster.conf
+slurm/generated/
+
+# machine-local probe output
+env_report.json
+slurm/cluster_report.txt
+download_log.json
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/

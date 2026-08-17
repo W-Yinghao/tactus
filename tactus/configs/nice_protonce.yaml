@@ -1,0 +1,53 @@
+# Same encoder, prototype-level contrast (ProtoNCE-style).
+#
+# The honest framing (blueprint 4.3): the video side is a fixed codebook of ~72
+# frozen prototypes per batch, so after de-duplication InfoNCE, SigLIP, SupCon
+# and ProtoNCE largely collapse onto the same ~72-way prototype classification.
+# This config exists as a 2-3 cell sanity check on that claim, NOT as a headline
+# method contribution -- a 1-4 point gap here is below the video-level minimum
+# detectable difference (~8 points at 90 stimulus units) and must not be
+# reported as a win.
+#
+#   python -m tactus.train.run -c configs/nice_protonce.yaml
+
+base: default.yaml
+
+run:
+  name: nice_protonce
+  notes: >
+    Prototype-level contrast against the condition codebook. Paired with
+    nice_infonce as a loss-family sanity check, reported with the video-level
+    MDD stated alongside.
+
+loss:
+  name: protonce
+  temperature: 0.04
+  learnable_temperature: true
+  granularities: [condition, video]   # 360-way and 90-way prototype banks
+  weights: {condition: 1.0, video: 0.5}
+  n_conditions: 360
+  n_videos: 90
+  source: video            # prototypes seeded from the frozen video embedding
+  momentum: 0.99
+  # MUST stay false with source=video and a trainable video projector.
+  # live_positive=True replaces the positive logit with the *live*
+  # differentiable <z_eeg, z_vid> while every negative stays a *stale* detached
+  # EMA bank entry.  The projector can then win every comparison just by
+  # rotating the current batch away from its own lagging copies -- no EEG-video
+  # relationship required.  Measured on this repo (tests/test_protonce_shortcut.py):
+  # with EEG replaced by pure noise, live_positive=True reaches 100% training
+  # accuracy on a 90-way bank while live_positive=False stays at chance.
+  # With it false the video side is what the blueprint says it is (4.3): a
+  # frozen codebook.  If the projector needs gradient, add a small in-batch
+  # term via CompositeLoss rather than turning this back on.
+  live_positive: false
+  # The four orientations of a video are visually different stimuli, so a
+  # sibling orientation is a legitimate negative at condition granularity; the
+  # video-granularity bank is what ties them together.
+  mask_sibling_orientations: false
+
+train:
+  epochs: 60
+  batch:
+    size: 72
+    mode: distinct_video

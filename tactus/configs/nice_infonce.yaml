@@ -1,0 +1,48 @@
+# NICE-style encoder + masked InfoNCE.  The reference configuration:
+# the transplanted THINGS-EEG recipe, which every later config is measured
+# against.  Run this first on `within_subject` to check the pipeline, then on
+# `double_disjoint` for the headline.
+#
+#   python -m tactus.train.run -c configs/nice_infonce.yaml --regime within_subject
+#   python -m tactus.train.run -c configs/nice_infonce.yaml   # double_disjoint
+
+base: default.yaml
+
+run:
+  name: nice_infonce
+  notes: >
+    NICE (Song et al., ICLR 2024) shallow spatio-temporal conv + channel
+    attention, subject token conditioning, masked InfoNCE against the frozen
+    per-condition video embedding.
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25
+
+# Plain InfoNCE is safe here only because the sampler makes it safe: with a
+# frozen 360-entry codebook, two trials of the same condition in one batch are
+# an exact false-negative pair, and `batch.mode: distinct_video` guarantees one
+# trial per base video so that never happens.  If you change the batch mode
+# (atm_composite does), switch this to `masked_infonce`, which masks
+# same-condition entries out of the denominator explicitly.
+loss:
+  name: infonce
+  temperature: 0.04
+  learnable_temperature: true
+  direction: both        # both | eeg2vid | vid2eeg  (symmetric CLIP-style)
+  label_smoothing: 0.0
+
+train:
+  epochs: 60
+  batch:
+    size: 72
+    mode: distinct_video
+  optimizer:
+    lr: 3.0e-4

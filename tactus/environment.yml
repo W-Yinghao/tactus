@@ -1,0 +1,71 @@
+# conda env create -f environment.yml && conda activate tactus
+#
+# The CUDA build is pinned through the pytorch channel.  On a CPU-only box
+# (metadata audits, the MVPA baseline) drop `pytorch-cuda` and the `nvidia`
+# channel -- everything except tactus.train runs without a GPU.
+name: tactus
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+
+dependencies:
+  - python=3.11
+
+  # --- deep learning -------------------------------------------------------
+  - pytorch>=2.3
+  - torchvision
+  - pytorch-cuda=12.1          # remove on CPU-only machines
+  - transformers>=4.44         # frozen video towers (SigLIP2, X-CLIP, VideoMAE)
+  - safetensors
+  - accelerate
+  - einops
+
+  # --- EEG -----------------------------------------------------------------
+  - mne>=1.7                   # BDF reading, ICA, epoching
+  - mne-base
+  - autoreject                 # fixed-hyperparameter artifact rejection
+  - python-picard              # faster ICA than the default infomax
+
+  # --- scientific stack ----------------------------------------------------
+  - numpy>=1.26
+  - scipy>=1.11
+  - pandas>=2.1
+  - pyarrow>=15                # trials.parquet
+  - scikit-learn>=1.4          # LDA shrinkage, ridge, metrics
+  - statsmodels                # mixed models for the subject x video inference
+  - joblib                     # per-subject parallelism in the baselines
+  - numexpr
+  - h5py
+
+  # --- config / CLI --------------------------------------------------------
+  - omegaconf>=2.3
+  - pyyaml
+  - tqdm
+
+  # --- video ---------------------------------------------------------------
+  - opencv                     # mp4 frame extraction for the video towers
+  - av
+  - pillow
+
+  # --- data transfer -------------------------------------------------------
+  - awscli                     # aws s3 sync --no-sign-request s3://openneuro.org/ds005662
+  - boto3
+  - datalad                    # alternative OpenNeuro fetch path
+
+  # --- plotting / reporting ------------------------------------------------
+  - matplotlib>=3.8
+  - seaborn
+  - jupyterlab
+  - ipywidgets
+
+  # --- dev -----------------------------------------------------------------
+  - pytest
+  - ruff
+  - black
+
+  - pip
+  - pip:
+      - decord                 # faster than opencv for short-clip decoding
+      - openneuro-py

@@ -1,0 +1,378 @@
+# TACTUS STATUS  (updated 2026-08-17T07:30Z)
+
+## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
+## Gates: **G0 G1 G2 G3 G4 G5 G6a** passed. **G6b (ocular) deliberately not declared** — see §6.
+
+> Canonical status document required by `MISSION.md` §0. Every number below is traceable to a
+> named file under `/projects/EEG-foundation-model/tactus_work/`.
+> The earlier Chinese edition is kept verbatim at `STATUS.zh.md`; this file is authoritative.
+
+---
+
+# 1. Headline result
+
+**The blueprint's main claim holds: zero-shot retrieval for an unseen subject watching an
+unseen video.**
+
+Primary endpoint throughout is the pre-registered `test/video/g18/top1_pseudo` (decision D4):
+18-way, source-video gallery, pseudo-trial k=4, eeg→video, aggregated to n=80 subject-level
+scores. Chance = 5.56%.
+
+| Regime / arm | Folds | Primary | 95% CI | Perm p | z | Frac. of ceiling | Beyond material |
+|---|---|---|---|---|---|---|---|
+| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | 11.5 | 0.614 | 74.8% |
+| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 12.6 | 0.674 | 75.0% |
+| within_subject · EA+ridge (linear floor) | 5 | 10.09% | 9.69–10.48 | 0.001 | 10.3 | ≈0.57 | — |
+| **double_disjoint · NICE+ProtoNCE** | **40** | **10.45%** | 9.98–10.92 | **0.0002** | **12.6** | **0.835** | **76.9%** |
+
+The double-disjoint cell is the headline: 5 video folds × 8 subject folds, every subject held
+out exactly once per video fold. It sits only 1.5 points below the within-subject number while
+recovering a **larger** share of what the data can support — 83.5% of the split-half noise
+ceiling versus 67.4% — because the cross-subject ceiling is itself lower (0.125 vs 0.177).
+
+Permutation inference uses the **source video** as the exchangeable unit, 5000 permutations;
+p is at the 1/5001 floor in every arm. The deliberately wrong trial-level null is reported only
+as a contrast: its SD is **4.12×** narrower (within_subject) / **3.50×** (double_disjoint),
+inside the 4–9× band the blueprint predicted. It never supplies a reported p-value.
+
+**Loss-family comparison (decision D7).** ProtoNCE − InfoNCE = +0.94 points, paired Wilcoxon
+p = 7.4e-8, 59/80 subjects favour ProtoNCE, bootstrap CI [+0.67, +1.22]. This is a
+**fixed-stimulus** claim — "better on these 90 videos". It does **not** license a
+stimulus-generalising claim; the video-level minimum detectable difference is ≈8 points.
+
+**λ₁ redundancy ablation (ATM + composite, 5 folds).** CLISA at weight 0.2 vs 0:
+10.55% vs 10.48%, per-fold differences +0.06 / +0.23 / +0.24 / −0.31 / +0.18. The cross-subject
+term's net contribution is **indistinguishable from zero**, confirming the blueprint's suspicion
+that it is redundant with the cross-modal term.
+
+**Attribute-shortcut control.** 90 same-hand, same-scene videos make "zero-shot video retrieval"
+and "material decoding" overlap by construction, so every arm is also scored against a null that
+shuffles the gallery *within material*. Queries whose target is the only gallery video of its
+material are excluded from both terms — a within-material permutation is the identity on those,
+so they would inflate the null for a non-material reason (26 of 216 gallery slots, 12%).
+
+---
+
+# 2. Foundation-model rung (ladder rung 5)
+
+All three load their published checkpoints, verified tensor-by-tensor by an independent agent
+rather than by trusting `from_pretrained` (which uses `strict=False` and silently skips
+mismatches).
+
+| Model | Pretrained | Params | Padding | Channel mapping |
+|---|---|---|---|---|
+| LaBraM-base | 221/221 tensors · 100% | 5.8 M | 40% | 64/64 names matched, no interpolation |
+| CBraMod | 211/211 tensors · 100% | 5.7 M | 40% | channel-agnostic; ordering mismatch unquantified |
+| EEGPT | 103/103 tensors · 100% | 25.3 M | 6.25% | **P9, P10, Iz, AFz effectively dropped** |
+
+Fold-matched comparison (same three video folds, within_subject, chance 5.56%):
+
+| Arm | Trainable params | Primary | Per fold |
+|---|---|---|---|
+| NICE + ProtoNCE | **0.33 M** | **11.40%** | 9.71 · 12.00 · 12.48 |
+| NICE + InfoNCE | 0.33 M | 10.56% | 9.92 · 10.65 · 11.11 |
+| LaBraM-base | 5.8 M | 10.53% | 10.30 · 10.68 · 10.62 |
+| CBraMod | 5.7 M | 9.87% | 8.99 · 10.25 · 10.37 |
+| EEGPT | 25.3 M | 9.38% | 8.87 · 9.38 · 9.90 |
+
+All three pretrained models land **below** the 0.33 M convolution, and the ordering runs against
+parameter count. **Read this as a statement about the interface before treating it as one about
+the models**: 40% padding for two of three, untuned hyperparameters (no GPU was free to sweep),
+and 3 folds means no permutation p and no fraction-of-ceiling.
+
+**The interface mismatch is the result here, not a footnote.** LaBraM's patcher output width *is*
+the transformer's embedding width, so shrinking `patch_size` to fit our 120-sample epoch leaves
+only **12 of 221 tensors (0.03%)** loadable — the whole model, transformer included, becomes
+randomly initialised, and braindecode does this behind a single `UserWarning`. The wrapper now
+promotes it to an error. CBraMod at 200 samples has exactly **one patch**, which degenerates the
+temporal half of its criss-cross attention. EEGPT was pretrained at 250 Hz against our 200 Hz, so
+each patch spans 320 ms instead of 256 ms.
+
+---
+
+# 3. Are the dataset's two distinguishing assets usable?
+
+The dataset is worth using for two specific reasons: **230,400 single trials**, and stimuli that
+are **continuous video** rather than static images. Both were tested directly.
+
+## 3.1 Video temporality — not reachable with frozen clip-level towers
+
+Cosine between a clip's embedding and the embedding of the same frames re-ordered, all 90 base
+videos. `d/d_video` expresses that as a fraction of how far swapping in a *different* video moves
+the embedding.
+
+| Encoder | cos(native, shuffled) | cos(native, reversed) | d/d_video shuf / rev | NN flips (rev) |
+|---|---|---|---|---|
+| videomae-v2-base | 0.8816 | 0.9746 | 0.311 / 0.065 | 0 / 90 |
+| videomae-base-k400 (repaired) | 0.9367 | 0.9942 | 0.478 / 0.043 | 0 / 90 |
+| xclip-base-32 (nominally temporal) | 0.9999 | 1.0000 | 0.000 / 0.000 | 0 / 90 |
+| **siglip2-base** (used for every reported number) | **1.00000** | **1.00000** | 0.000 / 0.000 | 0 / 90 |
+| clip-vit-l14 | 1.00000 | 1.00000 | 0.000 / 0.000 | 0 / 90 |
+
+Three findings stack and together close the question:
+
+1. **The target every reported number was trained against is order-blind by arithmetic.**
+   SigLIP2 mean-pools per-frame embeddings, so a touch video and its frames in random order give
+   a *bit-identical* vector.
+2. **Reversal is invisible to all five encoders**, including the two that react to scrambling.
+   An approaching hand and a retreating hand sit at cos 0.994 in VideoMAE — closer than two
+   different videos (0.865) — and 0 of 90 nearest neighbours change. Scrambling destroys temporal
+   *smoothness*; reversal preserves the multiset of adjacent-frame transitions, so masked-video
+   pretraining never had to encode the arrow of time. This replicates across two independent
+   encoders, so it is a property of the pretraining objective, not a bug.
+3. **Contract C's pooling deletes the time axis by arithmetic anyway**, for the video-SSL family
+   too: the stored vector is the mean over tubelet steps, so the deviation-from-step-mean
+   contributes exactly zero. **Swapping encoders cannot fix this.**
+
+Independent confirmation from the re-run census: the frame-**shuffled** cache scores LOVO top-5 =
+0.222 against the native 0.233. Destroying frame order costs essentially nothing on the metric
+that decides whether video-level zero-shot is possible at all.
+
+A temporal read-out head was built and tested. On SigLIP2 it buys nothing nameable (LOVO at or
+below chance; `approaching` AUC 0.494 vs the pooled vector's 0.312). On repaired VideoMAE its
+apparent gain is **reproduced by a random mean-orthogonal contrast**, so it is not established as
+temporal-specific.
+
+**Implication.** Using the video-ness would need motion-specific features (optical flow, motion
+energy) or frame sequences aligned to the EEG time course — not a temporal read-out bolted onto a
+pooled clip vector. Artefacts are on disk (`video_emb/*__shuffled`, `*__reversed`,
+`video_emb_seq/`) so the training arm is one command away if wanted.
+
+## 3.2 Trial count — measurable for the first time, and it exposed a fact about existing numbers
+
+| Stage | Trials | Kept |
+|---|---|---|
+| Raw non-target rows (80 × 2880) | 230,400 | 100% |
+| after dropping post-target (button-press artefact) | 216,049 | 93.8% |
+| within_subject training pool (D1 adjacency embargo applied) | 113,985 | 49.5% |
+| within_subject test pool | 43,210 | 18.8% |
+| **evaluation units at the pre-registered k=4** | **10,802** | **4.7%** |
+| CorrCA / SRM operate on condition averages | 28,800 | discards 87.5% of single trials |
+
+A trial-subsampling knob now exists (exact, nested, balanced, step-matched, with a byte-identical
+evaluation set proven across 12 arms on real data). Building it produced two findings:
+
+- **The pseudo-trial curriculum collapses under subsampling.** Realised k across frac 1 → ½ → ¼ →
+  ⅛ is **3.90 → 2.71 → 1.46 → 1.00**. At frac ≤ ¼ the k=4 curriculum is already dead, so a naive
+  trial-scaling curve would have measured "we switched the curriculum off" and reported it as "we
+  removed data". Empirical proof: at ⅛ data, curriculum on and curriculum off produce the
+  *identical* number (0.06399). Any usable curve needs the k=1 companion arm, which is wired.
+- **Realised k is 3.90 at full data, not 4.** The D1 embargo plus the inner validation split leave
+  ~4.9 repeats per (subject, condition) cell, not 8. This is a **pre-existing property of the
+  reported 10.99% / 11.93%**, not something the new knob introduced.
+
+---
+
+# 4. Data and preprocessing
+
+| Group | Verified |
+|---|---|
+| raw BDF | **80/80 = 107.7 GB** |
+| authors' MNE derivatives | 80/80 = 10.5 GB |
+| events.tsv | 80/80 = 62.9 MB |
+| stimuli mp4 | 384 (4 orientations × 90 + 4 target dirs × 6) |
+| VTD.csv / participants.tsv / phenotype | 90 rows / 80 rows / 4 tables |
+
+Epochs: 160/160 memmaps (80 subjects × {`w0600` (2880,64,120), `wm100_800` (2880,64,180)}), 17 GB,
+`baseline: null`, `n_dropped: 0`, 1:1 row alignment with the trial table, and a **single config
+fingerprint** `7d219f48f433` across all 80.
+
+- **EXG/EOG question settled: none exist.** The BDF header is 64 EEG (A1–A32, B1–B32) + Status.
+  The blueprint's "0 EOG, use frontal proxies" premise holds. ICA found 2–5 ocular components per
+  subject (median 3, **none with zero**), median max |HEOG| r = 0.86, |VEOG| r = 0.96.
+- Robust scale median 17.3 µV IQR-sigma (7.8–58.0); **no dead channels**.
+- autoreject 80/80: median bad-epoch fraction 8.7% (range 0–42.7%); **10 subjects above 20%**
+  (worst sub-42 at 42.7%).
+
+---
+
+# 5. Phase-0 audits
+
+- **Audit A = INTERLEAVED — the blueprint's #1 statistical risk is cleared.** Pure-orientation
+  sequence fraction **0.000**, dominant-orientation fraction 0.297 (≈ chance 0.25), Cramér's V
+  median 0.092, normalised mutual information orientation↔sequence 0.009. The §6.1-1 fallback is
+  **not** triggered and the Q1a equivariance design stands as written.
+- 80/80 subjects design-complete (2880 non-target trials, 360 conditions × 8 repeats), SOA median
+  0.7998 s, `onset_index_base` unanimously 0 with an exactly-zero residual.
+- **Audit C — three attributes are one variable.** Across the 90 stimuli `toucher↔object` = 1.000,
+  `toucher↔material` = 1.000, `object↔material` = 0.993; the affective axis is nearly collinear
+  too (`threat↔pain` = 0.971). 23 pairs exceed 0.5, and the material × touch_type table has 61 of
+  96 cells empty. Any claim separating those three is unsupportable here, and the caveat is
+  hard-coded into the census report and the "cannot be certified" list of every generated
+  `REPORT.md`.
+- **Material stratification arithmetic differs from the blueprint.** Actual counts are
+  `{skin 28, metal 27, plastic 13, wood 10, cotton 4, fabric 3, sponge 3, hair 2}`, not "8 classes
+  × ~11 videos", so each 5-fold test set covers only 6–7 of 8 classes. `splits.py` degrades
+  gracefully; the empty-cell table is a publishable artefact.
+- Splits verified leakage-free: within_subject 5 / loso 8 / double_disjoint 40 folds. **D1's cost
+  measured**: `adjacency_side="train"` removes 34% of training trials and **0** test trials.
+- Phenotype (n=80, no missing): VT 1.84 ± 2.97 (0–10, **zero-inflated**), EQ 16.06 ± 5.14, IRI
+  24.82 ± 4.35, MTS self-report Yes **17/80** (the blueprint expected 1–2 true positives; the
+  self-report rate is far higher and must be stated as such). No questionnaire correlates with age
+  (|r| ≤ 0.124).
+
+**G4 encoder census (re-run on repaired weights).** No encoder collapsed (effective rank
+23.7–28.1); RDM–attribute correlations significant for object / material / valence across all
+towers; leave-one-video-out attribute→embedding retrieval top-5 = 0.20–0.28 against 0.056 chance,
+p = 0.001 for every tower. **Video-level zero-shot remains the primary endpoint**; the
+attribute-level fallback is not triggered.
+
+---
+
+# 6. G5 and G6
+
+**G5 — time-resolved MVPA, the pipeline-correctness check.** Only two targets have a clean
+pre-stimulus baseline, and those two are exactly the ones that reproduce the published time
+course.
+
+| Target | Uniform chance | Majority rate | t₀ | Peak (ms) | Published | Verdict |
+|---|---|---|---|---|---|---|
+| Orientation | 0.250 | 0.250 | 0.2483 | 100 | 120–130 | reproduces |
+| Valence | 0 | — | −0.011 | 320 | 300 | reproduces |
+| Material | 0.125 | **0.311** | 0.2996 | 235 | 110–120 | majority-class null |
+| Toucher | 0.500 | **0.689** | 0.6856 | 35 | — | majority-class null |
+| Touch type | 0.083 | **0.356** | 0.3413 | 50 | 165 | majority-class null |
+
+Scored with plain accuracy against a uniform `1/n_classes`, the bottom three sit 2.4–4.6× "above
+chance" at *t = 0 ms*, before any evoked response can exist. They are sitting exactly on their
+majority-class rate. Under balanced accuracy only orientation decodes robustly (+4.8 pp); the
+others reach +0.1 to +0.4 pp. The report now prints the majority rate and an evoked fraction
+beside every latency.
+
+**G6a — primary-endpoint inference: passed** (see §1).
+
+**G6b — ocular control: deliberately NOT declared.** Two blockers:
+- The EEG arm carries 64 × 20 = **1280** ridge features against the EOG surrogate's **2**, so
+  "EEG beats the surrogate" is confounded with feature dimensionality. A dimension-matched control
+  is required.
+- The `wm100_800` pre-saccadic selector is `t < 150 ms` on a window that begins at −100 ms, so it
+  swallows the baseline.
+
+With the gallery corrected to the fold's 18 held-out videos and the intercept-free variant scored,
+the signal is clearly present (full EEG 0.0840 vs ocular-ablated 0.0833 vs surrogate 0.0764;
+single-trial ≈5.8σ above chance) — but the criterion is not claimed until both blockers are fixed.
+
+---
+
+# 7. Defect ledger
+
+Every module executed for the first time this session had at least one real defect. The pattern
+worth recording: **almost none of them crashed. They produced plausible numbers.**
+
+## 7.1 Would have invalidated a reported result
+
+| Where | What | Evidence |
+|---|---|---|
+| `losses/protonce.py` | The blueprint's **main objective** had a solvable shortcut. `live_positive=True` (the shipped default) makes the positive logit live and differentiable while every negative is a stale detached EMA prototype, so the video projector wins by outrunning its own lagging bank. | With EEG replaced by **pure noise**, training accuracy reaches 100%; with the flag off it stays at chance (0.018 ≈ 1/90). First real run: `condition_acc` 0.9999 with validation at chance. Pinned off in config, guarded by a `RuntimeWarning`, regression test added. |
+| `losses/composite.py` + `train/trainer.py` | `CompositeLoss.step()` exists but the trainer never called it, so the warmup counter stayed at 0 forever and **every component with a warmup had effective weight exactly 0**. | CLISA logged `weight: 0.0` at every epoch, nulling the λ₁ ablation that config exists to run. Fixed; ramp verified 0 → 0.1 → 0.2. |
+| `eval/run_report.py` | Run directories are keyed on `run.name`, not regime, so the double-disjoint grid wrote into the same folder as the within-subject folds and the report averaged both. | ProtoNCE read 11.93% (5 within-subject folds) before the grid started and 11.49% after. Now filtered on each fold's own recorded regime, with mixing logged loudly. |
+| `data/splits.py` | Double-disjoint folds are emitted video-fold-major, so the first five cells hold out the **same 18 videos** — zero stimulus variance, silently. | Caught before launch; the 40-fold grid was run complete. `fold_run_order()` added so any truncation spans video folds. |
+| `baselines/corrca.py` | The headline ISC measured the condition-*invariant* stimulus-onset response, not between-subject coupling to the same stimulus. | Permuting each subject's condition-averages independently leaves c1 at **91.4%** of its value. Genuine stimulus-specific ISC is ~8× smaller; margin against the correct null 1.09×, not the claimed 15×. After repair: per-pair c1 0.1522 → 0.0325, margin 1.09× → 3.50×. |
+| `eval/run_ocular.py` | Gallery was all 90 videos (~14 of them trained on) instead of the fold's 18 held-out, and only the intercept-inclusive prediction was scored — pinning every arm below chance. | The module printed "UNINFORMATIVE, there is no signal to ablate". Corrected numbers in §6. |
+| transformers 5.15 (upstream) | VideoMAE self-attention was rewritten from bare `q_bias`/`v_bias` parameters to `nn.Linear(bias=…)` with **no checkpoint conversion mapping**, so *any* published VideoMAE checkpoint loads with its trained q and v attention biases zero-filled (158/194 tensors). | Repair moved our cache by cos 0.911, dropped RDM rank correlation to 0.60, and changed the top-1 nearest video for **61% of the 90 stimuli**. Six census numbers moved. Canonical tag now points at repaired weights; the broken cache is quarantined. |
+
+## 7.2 Would have biased or misled
+
+| Where | What |
+|---|---|
+| `models/heads.py` | Per-window heads ran *outside* `subject_context` while `__init__` attached the SuLoRA adapters to exactly those heads — that arm's subject conditioning was identically zero. |
+| `train/trainer.py` | An `n_subjects+1` row 0 that no data ever trains; held-out subjects avoided it only by the grace of `strict_unseen=True`. Now index −1 and the computed rule (decision D2). |
+| `eval/probes.py` | The "ocular ablation" used prefix matching `("Fp","AF","F")`, which removes **26 of 64 channels** including all FC*/FT*/Fz — turning "is this eye movement?" into "is this frontal cortex?" (decision D6). |
+| `baselines/linear_mvpa.py` | Plain accuracy scored against uniform `1/n_classes` on severely imbalanced labels, making a majority-class predictor look like 2.4–4.6× decoding. |
+| `eval/retrieval.py` (reading, not code) | `cross_group` was being read as a material control. Its gallery makes the target the only item of its material, so a pure material classifier scores 100% — an upper bound *inflated by* the code it claims to control for. |
+| `data/preprocess.py` | A blown PO4 electrode on sub-17 (80× the median channel SD) reached the frozen epochs. The sidecar had already recorded `abs_max_after_scaling = 33297.9` — nothing read it. IQR-based robust scaling is blind to spikes by construction (sub-17 PO4 `robust_sd_ratio` = 1.00, `sd_ratio` = 82.7). |
+| `models/selftest.py` | The architecture list was hardcoded to `[tsconv, atm]`, so any encoder added later was never contract-tested yet the suite stayed green. Now walks the registry: **105/105** with `--all-registered`. |
+| `baselines/srm.py` | Cache key omitted the subject list, so an 80-subject run silently reused folds from a 6-subject run; and `subjects=` was never passed to `make_folds`, so subset runs tested on their own training subjects. |
+| `train/trainer.py` | `backbone_lr_scale` was a dead key — the trainer built its own parameter groups and never called `encoder.param_groups()`. AdamW is invariant to gradient scale, so only a per-group `lr` works. Now wired. |
+| `models/video/encode.py` | transformers ≥5 returns `BaseModelOutputWithPooling` from `get_*_features`, not a tensor; 3 of 4 encoders crashed. |
+| `data/download.py` | `--what auto --subject-index` was called by `submit.py` but did not exist; 80 concurrent writers shared one JSON log; and the metadata check asserted 80 per-subject sidecars while ds005662 uses BIDS inheritance (one top-level sidecar, no `channels.tsv` anywhere). |
+| `slurm/submit.py` | All seven stage command lines disagreed with the modules' real `argparse`. |
+
+## 7.3 One consequence chain worth following
+
+sub-17's dead electrode carried **91% of the pooled within-subject covariance** in CorrCA — giving
+that "80-subject" fit a Kish effective sample size of **1.2 subjects** — and **91% of the total
+Frobenius energy** of all 80 condition-average matrices in SRM, which is why the SRM objective was
+reconstructing one dead channel and scoring below a no-SRM control. The deep models were
+unaffected: their loader clamps at 20σ, sub-17's primary endpoint is 0.0997 (z = −0.69), and
+dropping it moves the cohort mean by +0.025 points.
+
+---
+
+# 8. Infrastructure built this session
+
+- **`slurm/pool.py`** — this cluster enforces `QOSMaxSubmitJobPerUserLimit = 30` **counted in array
+  elements** (probed: `--array=1-29` accepted, `1-30` rejected) and a separate
+  `QOSMaxGRESPerUser = 8` concurrent-GPU cap. The blueprint's 80-way preprocess array and 40-fold
+  training array cannot be submitted at all. The pool submits W worker jobs that claim tasks from a
+  shared directory: constant queue footprint, automatic load balancing, preempted workers rejoin.
+  Claims use `O_CREAT|O_EXCL`; the **heartbeat lives inside the file rather than in `st_mtime`**,
+  because this filesystem returns `st_mtime == 0` for freshly created files and every worker then
+  believed a one-second-old claim was 53 years stale and stole it.
+- **`tactus/eval/census.py`** — the G4 three-way judgment, permutation unit always the source video,
+  report carries the Audit-C collinearity caveat.
+- **`tactus/eval/run_report.py`** — the G6 driver (`report.py` had rendering but no driver):
+  per-subject retrieval → video-level permutation + trial-level narrowing contrast → split-half
+  ceiling → material-matched null → `REPORT.md`.
+- **`tactus/eval/run_ocular.py`** — the G6b driver.
+- **`tactus/data/qc.py`** — per-channel QC over the frozen epochs, with the cohort-relative
+  statistic that discriminates a broken electrode from a heavy blinker.
+- **`tactus/models/eeg/fm_{labram,cbramod,eegpt}.py`** — the foundation-model wrappers, each with a
+  raising pretrained-weight assertion.
+- Write-time channel QC gate in `preprocess.py`; `fold_run_order()` in `splits.py`; encoder
+  `param_groups` hand-off and `describe()` provenance logging in `trainer.py`.
+
+Cluster facts recorded in `slurm/cluster.conf`: no slurmdbd (no `--account/--qos`); the 3090
+partition caps 4 CPUs per GPU and slurm validates a multi-partition request against the *strictest*
+member, so every GPU job runs at `--cpus-per-task=4`; observed start latencies V100/P100/A30
+immediate, A40 +4.5 h, A100 +9 h, H100 +12 h, L40S +27 h.
+
+Environment: conda env `tactus` (py3.11 / torch 2.6.0+cu124 / mne 1.12 / braindecode 1.7 /
+transformers 5.15). **Install order matters**: braindecode pulls torchaudio 2.11, which links
+`libcudart.so.13` and dies on import against torch 2.6 — reinstall `torchaudio==2.6.0+cu124`
+immediately after. Recorded in `slurm/setup_env.sh`.
+
+Self-tests at time of writing: **72/72** loss scenarios, **33/33** model contract checks
+(**105/105** with `--all-registered`), **5/5** pytest. 63 modules, 37,168 lines.
+
+---
+
+# 9. Report index
+
+| Report | Path | Language |
+|---|---|---|
+| This status document | `tactus/STATUS.md` | English |
+| Chinese edition (archived, superseded) | `tactus/STATUS.zh.md` | Chinese |
+| Double-disjoint headline | `tactus_work/results/report_dd/REPORT.md` | English |
+| Within-subject InfoNCE | `tactus_work/results/report_nice_infonce/REPORT.md` | English |
+| Within-subject ProtoNCE | `tactus_work/results/report_nice_protonce/REPORT.md` | English |
+| Encoder census (repaired weights) | `tactus_work/phase0_out_v2/census_report.md` | English |
+| Phase-0 audits A–D | `tactus_work/phase0_out_en/audit_report.md` | English |
+| MVPA, sequence CV | `tactus_work/results/baselines/mvpa/w0600_sequence/report.md` | English |
+| MVPA, video-disjoint CV | `tactus_work/results/baselines/mvpa/w0600_video/report.md` | English |
+| MVPA, balanced accuracy | `tactus_work/results/baselines/mvpa_balanced/w0600_sequence/report.md` | English |
+| Channel QC | `tactus_work/derived/channel_qc.md` | English |
+
+---
+
+## DECISIONS_NEEDED
+
+1. **sub-17.** Clamping is not a silent repair — it changes that subject's condition-average
+   pattern beyond recognition (r = 0.162) because 99.75% of its energy is artefact. Clamp, exclude,
+   or interpolate is a protocol choice, not a bug fix.
+2. **Centring convention.** `srm.py` removes the training mean from prediction *and* gallery;
+   `linear_align.py` removes it from the query only. Two baselines, one endpoint, two conventions.
+3. **Which SNR regressor Q3 uses.** The repaired scale-invariant per-subject ISC correlates only
+   ρ = 0.61 with the old one, and ρ = 0.19 with split-half reliability once the onset ERP is
+   removed. Any phenotype analysis built on the old column has to be redone.
+
+## Next
+
+1. **Swap in the new contrastive loss** — what the repository was built for. Two edits:
+   `tactus/losses/my_loss.py` plus one import line, and a config with one `loss.name` key. Then
+   `python slurm/pool.py submit --name train_myloss --tasks 0-4 --workers 5 --gpus 1 ...`.
+   Baselines are in place with CIs, permutation p, ceiling fractions and the design's MDD.
+2. G6b: dimension-matched ocular control and the `wm100_800` window fix.
+3. Trial-count scaling curve (knob ready, needs the k=1 companion arm).
+4. Subject-scaling curve (10/20/40/79), Q1a equivariance, Q2 onset curves, Q3 phenotype.
+5. OSF pre-registration.

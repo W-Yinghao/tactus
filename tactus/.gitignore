@@ -1,0 +1,25 @@
+# derived data and run artifacts live in $TACTUS_WORK, never in git
+work/
+data/
+results/
+*.npy
+*.npz
+*.parquet
+*.fif
+*.bdf
+
+# generated at submit time from slurm/cluster.conf
+slurm/generated/
+
+# machine-local state
+# NOTE: STATUS.md is deliberately NOT ignored. MISSION.md makes it the project's
+# canonical status document, and it now carries the measured results, the defect
+# ledger and the DECISIONS_NEEDED list -- it is the record, not scratch state.
+env_report.json
+slurm/cluster_report.txt
+download_log.json
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/

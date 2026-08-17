@@ -1,0 +1,170 @@
+# TACTUS default configuration.
+#
+# Every other config sets `base: default.yaml` and overrides only what it
+# changes.  Anything here can also be overridden on the command line:
+#
+#   python -m tactus.train.run -c configs/nice_infonce.yaml \
+#       --override loss.name=protonce train.epochs=40 data.window=wm100_800
+#
+# The `loss:` block is THE swap point.  A new algorithm is one file in
+# tactus/losses/ plus one key here -- `loss.name` -- and nothing else.
+
+run:
+  name: default              # results/runs/<name>/
+  seed: 0
+  split_seed: 0              # fold construction; keep fixed across models
+  notes: ""
+
+# --------------------------------------------------------------------------- #
+data:
+  window: w0600              # PRIMARY: 0-600 ms, NO baseline correction.
+                             # The -100..0 ms baseline sits 700-800 ms after the
+                             # PREVIOUS trial onset and carries its late
+                             # affective response; subtracting it subtracts
+                             # previous-trial content.  wm100_800 is a
+                             # sensitivity variant only.
+  subjects: null             # null = all 80; or a list [1, 2, 3]
+  exclude_post_target: true  # trials following a target carry button-press
+                             # motor potentials -- never negotiable
+  # GPU jobs on this cluster run with --cpus-per-task=4 (the 3090 partition caps
+  # CPUs per GPU at 4 and slurm validates a multi-partition request against the
+  # strictest member), so 8 loader workers oversubscribe the allocation.
+  num_workers: 3
+  prefetch_factor: 4
+  pin_memory: true
+
+  ea:                        # Euclidean Alignment (He & Wu 2020), label-free
+    enabled: true
+    shrinkage: 0.05
+    test_subject_max_trials: null   # null = use all of a held-out subject's own
+                                    # trials (standard transductive EA); set to
+                                    # e.g. 64 to emulate "k calibration trials"
+  scaling:
+    mode: robust             # robust (median / IQR-sigma) | none
+    clamp: 20.0              # post-scaling clip, in robust sigmas
+    fit_trials: 512          # trials sampled per subject to fit the transform
+
+# --------------------------------------------------------------------------- #
+video:
+  # must match a file written by `tactus.models.video.encode`:
+  #   derived/video_emb/<tag>.npz  ->  siglip2-base | clip-vit-l14 |
+  #   xclip-base-32 | videomae-base-k400
+  model_tag: siglip2-base
+
+# --------------------------------------------------------------------------- #
+model:
+  d_embed: 256
+  n_channels: 64
+  n_subjects: 80             # exactly 80 parameter rows, mapped to dataset ids
+                             # 1..80.  There is deliberately NO extra row: an
+                             # unseen subject is passed id -1 and gets the
+                             # pre-registered rule COMPUTED from the training
+                             # subjects (mean-of-train-tokens / identity layer /
+                             # zero adapter), never a learned row (decision D2).
+  # none | subject_token (alias: token) | subject_layer (alias: layer, the
+  # Defossez 1x1-conv subject layer) | sulora.  These are the three mechanisms
+  # the blueprint 4.2 ablation compares.  There is no FiLM implementation.
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25
+  projector:
+    name: mlp
+    params:
+      hidden: 1024
+      n_layers: 2
+      dropout: 0.1
+
+# --------------------------------------------------------------------------- #
+# THE SWAP POINT.  `name` selects a registered loss; every other key is passed
+# straight to its constructor (see tactus.losses.base.build_loss).
+#
+# Ownership rule: any config or --override that sets `loss.name` REPLACES this
+# whole block rather than merging into it, because losses have disjoint kwargs
+# (handing `temperature` to the composite loss is a TypeError, and a stale key
+# that happens to be accepted silently changes the objective).  So
+# `--override loss.name=protonce` really is a one-key swap.
+loss:
+  name: infonce
+  temperature: 0.04
+  learnable_temperature: true
+
+# --------------------------------------------------------------------------- #
+train:
+  epochs: 60
+  amp: bf16                  # bf16 | fp16 | off  (the loss always runs in fp32)
+  grad_clip: 1.0
+  accum_steps: 1
+  deterministic: false       # true is ~20% slower; use for a reported ablation
+  log_every: 50
+  max_steps_per_epoch: null
+  n_train_subjects: null     # scaling curve: 10 / 20 / 40 / 79
+
+  batch:
+    size: 72                 # clamped to the number of distinct training videos
+    mode: distinct_video     # distinct_video | video_x_subject
+    subjects_per_video: 1    # only used by video_x_subject (CLISA-style terms)
+    drop_last: true
+
+  optimizer:
+    name: adamw
+    lr: 3.0e-4
+    weight_decay: 0.05
+    betas: [0.9, 0.98]
+
+  scheduler:
+    name: cosine
+    warmup_epochs: 2
+    min_lr_factor: 0.02
+
+  # SNR curriculum: start from k=4 averaged repeats, anneal to single trials.
+  # prob_mix raises the probability that an anchor is a single trial from 0 to 1
+  # over anneal_epochs, so the batch is a mixture throughout instead of jumping.
+  curriculum:
+    enabled: true
+    mode: prob_mix           # prob_mix | step
+    k_start: 4
+    anneal_epochs: 12
+    ladder: [4, 4, 2, 2, 1]  # used by mode=step
+    rescale: none            # none | sqrt_k (amplitude match to single trials)
+
+  # Inner validation split -- carved out of the TRAINING videos, never the test
+  # fold, so early stopping cannot inflate the reported number.
+  val:
+    mode: video              # video | video_subject | trial
+    video_frac: 0.2
+    subject_frac: 0.15       # only used by video_subject
+    gallery_unit: video
+    gallery_sizes: []
+    pseudo_k: 4
+    n_resamples: 5
+    every: 1
+
+  early_stop:
+    monitor: val/top1_pseudo
+    mode: max
+    patience: 10
+    min_delta: 0.0
+
+# --------------------------------------------------------------------------- #
+eval:
+  regime: double_disjoint    # within_subject | loso | double_disjoint
+  n_video_folds: 5
+  n_subject_folds: 8         # 5 x 8 = 40 folds; each subject held out once per
+                             # video fold
+  gallery_units: [video, condition]
+  gallery_sizes: [2, 10, 18, 90]
+  pseudo_k: 4
+  pseudo_resamples: 5
+  n_resamples: 20            # random sub-galleries per size
+  batch_size: 512
+  save_embeddings: true
+  n_perm: 10000              # permutation unit is the BASE VIDEO, never the
+                             # trial (trial-level nulls are 4-9x too narrow);
+                             # consumed by tactus.eval, not by the trainer
+  # Pre-registered primary endpoint: video-disjoint, 18-way, pseudo-trial k=4.
+  primary_metric: test/video/g18/top1_pseudo

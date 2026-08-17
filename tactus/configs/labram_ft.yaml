@@ -1,0 +1,160 @@
+# Baseline ladder rung 5 (MISSION 5.3): EEG foundation-model fine-tuning.
+# LaBraM-base (Jiang et al., ICLR 2024), braindecode.models.Labram,
+# weights `braindecode/labram-pretrained` (5.82 M backbone parameters).
+#
+#   python -m tactus.train.run -c configs/labram_ft.yaml --folds 0,9,18
+#
+# THIS IS AN INDICATIVE BASELINE, 3 FOLDS ONLY.  It is not a like-for-like
+# comparison with the conv rungs: the interface mismatch below is real and is
+# reported, not hidden.
+#
+# Use --folds 0,9,18, not --max-folds 3: the 40 folds are ordered video-fold
+# major, so --max-folds 3 would take vf00_sf00/sf01/sf02 -- three subject
+# groups against the SAME 18 test videos, which holds the dominant variance
+# component constant.  0/9/18 is the diagonal (vf00_sf00, vf01_sf01,
+# vf02_sf02): three distinct video folds and three distinct subject groups.
+#
+# The encoder pulls its weights from the HF hub at construction time (once per
+# fold).  On a compute node with no outbound network, either export
+# HF_HUB_OFFLINE=1 or set model.eeg.params.local_files_only: true so it reads
+# $HF_HOME straight from cache instead of waiting on HEAD requests.
+#
+# ===================================================================== #
+# THE PATCH-SIZE / EPOCH-LENGTH MISMATCH -- the documented decision      #
+# ===================================================================== #
+# LaBraM tokenises EEG in 1-second patches: patch_size = 200 samples at
+# 200 Hz.  Our epochs are 120 samples (w0600, 0-600 ms, contract B).
+#
+# braindecode accepts n_times=120 with only a UserWarning
+# ("patch_size (200) > n_times (120); setting patch_size = 120") -- and that
+# warning under-states the damage by four orders of magnitude.  LaBraM's
+# patcher is a fully convolutional stack whose OUTPUT WIDTH is the
+# transformer's embed_dim: 8 * ((patch_size - 1)//8 + 1).  So
+#     patch_size 200 -> embed_dim 200   (the pretrained model)
+#     patch_size 120 -> embed_dim 120   (a different model)
+# and every tensor after the patcher changes shape.  Measured against the
+# checkpoint (tactus/models/eeg/fm_labram.py has the reproduction):
+#
+#     build at n_times=120 :   12/221 tensors,     576/2,108,112 params =  0.03 %
+#     build at n_times=200 :  221/221 tensors, 5,817,136/5,817,136 params = 100 %
+#
+# A LaBraM built on the raw 120-sample epoch is therefore a randomly
+# initialised transformer wearing LaBraM's name.  fm_labram.py REFUSES to
+# build it (patch_size=120 raises; pretrained=false raises unless
+# allow_random_init is set).
+#
+# DECISION: keep the real 200-sample patcher and pad the epoch.
+#   PRIMARY      w0600      120 -> 200 samples, padding fraction 0.40
+#   SENSITIVITY  wm100_800  180 -> 200 samples, padding fraction 0.10
+# We run the PRIMARY window so this rung reads the same 0-600 ms data as
+# every other rung on the ladder; the 40 % padding is the price and it is
+# printed in the run log (encoder.describe()["pad_fraction"]).  wm100_800
+# would cost only 10 % padding but is baseline-contaminated by design
+# (contract B), so it is a LABELLED sensitivity run, never the headline:
+#   python -m tactus.train.run -c configs/labram_ft.yaml \
+#       --override data.window=wm100_800 --tag wm100_800 --folds 0,9,18
+#
+# Padding is replicate + center: the epoch sits in the middle of the patch,
+# the 40 samples before onset hold the value at 0 ms, the 40 after hold the
+# value at 600 ms.  Replicate is C0-continuous so it fabricates no broadband
+# transient (zero-padding would, on data carrying no baseline correction and
+# therefore no zero-mean guarantee) and it duplicates no evoked event
+# (reflect would).  pad_mode: zeros|reflect and pad_align: left|right are
+# available; the choice measurably changes the embedding (max |delta| ~0.3
+# on unit-norm outputs across the 9 variants), so it must stay in the log.
+#
+# Channel mapping: all 64 BioSemi-64 names in derived/channels.json are in
+# LABRAM_CHANNEL_ORDER (verified 64/64), so the per-electrode position
+# embeddings are selected by name -- no interpolation, no InterpolatedLaBraM.
+#
+# Amplitude convention: LaBraM pretrained on microvolts/100; we feed the
+# pipeline's robust-scaled units (measured on real epochs: std 0.87,
+# p99 |x| 2.8).  input_scale sweeps {3, 1, 0.3, 0.1, 0.03, 0.01} on 512 real
+# trials gave the widest feature spread / highest effective rank at 1.0, so
+# the default below is measured rather than assumed -- but it is NOT a
+# calibration to LaBraM's pretraining units.
+
+base: default.yaml
+
+run:
+  name: labram_ft
+  notes: >
+    Ladder rung 5, INDICATIVE, 3 folds.  LaBraM-base fine-tuned end to end.
+    Backbone 100% from braindecode/labram-pretrained; projector and subject
+    token random, as on every rung.  w0600 padded 120 -> 200 samples
+    (40% padding) to preserve the pretrained 200-sample patch embedding --
+    see the header block; building at 120 would keep 0.03% of the checkpoint.
+
+data:
+  window: w0600            # PRIMARY.  Do not switch to wm100_800 to make the
+                           # padding fraction look better without labelling it.
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token   # same mechanism as nice_infonce, so the
+                                        # rung differs only in the EEG trunk
+  eeg:
+    name: labram
+    params:
+      pretrained: true          # false raises unless allow_random_init is set
+      hf_repo: braindecode/labram-pretrained
+      # local_files_only: true  # force the $HF_HOME cache (offline compute nodes)
+      # patch_size: null        # null = take the checkpoint's 200. Passing 120
+      #                         # raises: it would discard the checkpoint.
+      pad_mode: replicate       # replicate | zeros | reflect
+      pad_align: center         # center | left | right
+      pool: cls_mean            # cls | mean | cls_mean (400-d) | flatten (12800-d)
+      input_scale: 1.0
+      drop_path_prob: 0.1       # LaBraM's own fine-tuning default
+      drop_prob: 0.0
+      proj_dropout: 0.5
+      # --- fine-tuning knobs -------------------------------------------------
+      freeze_backbone: false    # true + n_unfrozen_blocks = partial fine-tune
+      # n_unfrozen_blocks: 2    # with freeze_backbone: true, trains only the top
+      #                         # 2 of 12 blocks + the final norm (0.97 M params)
+      backbone_lr_scale: 0.1    # consumed by LabramEncoder.param_groups(), which
+      #                         # Trainer._build now calls and prepends, so the
+      #                         # backbone trains at 0.1x the projector LR.  (This
+      #                         # comment previously said the key was inert; that
+      #                         # was true until the param_groups hand-off landed.)
+
+loss:
+  name: infonce               # identical objective to configs/nice_infonce.yaml
+  temperature: 0.04
+  learnable_temperature: true
+  direction: both
+  label_smoothing: 0.0
+
+train:
+  # LR NOTE.  tactus/train/trainer.py builds one global LR for encoder+projector
+  # (two weight-decay groups, no per-module scaling), so a pretrained ViT and a
+  # freshly initialised projector currently share a learning rate.  3e-4 (the
+  # ladder default) is far too hot for a 12-block pretrained transformer, so this
+  # config drops the global LR to 1e-4 as the compromise.
+  # A gradient-scaling hook is NOT a substitute for a per-group LR: AdamW
+  # normalises by the gradient's own second moment, so scaling gradients does not
+  # scale the step.  The clean fix is 3 lines in trainer.py:
+  #     if hasattr(self.encoder, "param_groups"):
+  #         groups = self.encoder.param_groups(lr, wd) + projector/loss groups
+  # which would let backbone_lr_scale: 0.1 do its job (backbone 3e-5, head 3e-4).
+  # Until then, the cheap alternative recipe is
+  #     freeze_backbone: true, n_unfrozen_blocks: 2, train.optimizer.lr: 3.0e-4
+  # which keeps the head at the ladder's LR and moves only the top 2 blocks.
+  epochs: 30                 # a 5.8M pretrained transformer overfits 2880
+                             # trials/subject far faster than the conv rungs
+  amp: bf16
+  grad_clip: 1.0
+  batch:
+    size: 72
+    mode: distinct_video
+  optimizer:
+    lr: 1.0e-4
+    weight_decay: 0.05
+  scheduler:
+    name: cosine
+    warmup_epochs: 3         # transformers need the warmup more than convs do
+    min_lr_factor: 0.02
+  early_stop:
+    monitor: val/top1_pseudo
+    mode: max
+    patience: 8
