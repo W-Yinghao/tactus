@@ -26,9 +26,12 @@ semantic   ``semantic``  distributional alignment with soft targets from the
                          continuous affect kernel
                          ``w_ij = exp(-(|dv|+|da|+|dt|) / sigma)``
                          (valence/arousal/threat, z-scored upstream).
---         ``disent``    squared cross-covariance between the batch-centred
+--         ``disent``    squared cross-*correlation* between the batch-centred
                          content and geometry embeddings (EEG side), pushing
                          the two heads toward carrying different information.
+                         Correlation, not covariance: see
+                         :meth:`_cross_correlation` for the measurement that
+                         forced the change.
 =========  ==============================================================
 
 Implementation notes
@@ -257,13 +260,32 @@ class FactorizedFHMC(ContrastiveLoss):
         return torch.stack(losses).mean()
 
     @staticmethod
-    def _cross_covariance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        """Mean squared entry of the batch cross-covariance matrix."""
+    def _cross_correlation(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-6):
+        """Mean squared entry of the batch cross-*correlation* matrix.
+
+        Returns ``(penalty, max_abs_corr)``.
+
+        This was a cross-*covariance* until it was measured.  Both heads emit
+        L2-normalized rows, so every coordinate has scale ~1/sqrt(d) and a
+        covariance entry scales as 1/(d_a*d_b): with d=128 and 32 the penalty
+        read 5.8e-07 while the largest cross-correlation between a content and
+        a geometry coordinate was 0.788.  Multiplied by lambda_disentangle=0.1
+        that is 6e-08 against terms of magnitude ~3, so the constraint was
+        inoperative for the whole run and the probes duly found the two heads
+        decoding orientation equally well (0.595 vs 0.604).  Correlation is
+        scale-free and lands in [0, 1], which is the only reason a single
+        lambda can trade it off against a cross-entropy.
+        """
         a_c = a - a.mean(dim=0, keepdim=True)
         b_c = b - b.mean(dim=0, keepdim=True)
         denom = max(a.shape[0] - 1, 1)
         cov = a_c.t() @ b_c / denom
-        return (cov ** 2).mean()
+        scale = torch.outer(
+            a_c.std(dim=0, unbiased=True).clamp_min(eps),
+            b_c.std(dim=0, unbiased=True).clamp_min(eps),
+        )
+        corr = cov / scale
+        return (corr ** 2).mean(), corr.detach().abs().max()
 
     # ------------------------------------------------------------------ #
     # forward
@@ -360,9 +382,13 @@ class FactorizedFHMC(ContrastiveLoss):
             and zg_e is not None
             and B >= 2
         ):
-            loss_d = self._cross_covariance(zc_e, zg_e)
+            loss_d, max_corr = self._cross_correlation(zc_e, zg_e)
             terms["disent"] = loss_d
             logs["disent/raw"] = to_float(loss_d)
+            # Logged because "the penalty is small" and "the heads are
+            # independent" are different statements, and only this one is
+            # readable without knowing the head widths.
+            logs["disent/max_abs_corr"] = to_float(max_corr)
 
         if not terms:
             total = self._zero_loss(z_eeg, z_vid)

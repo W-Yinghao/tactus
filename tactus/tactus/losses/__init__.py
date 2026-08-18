@@ -102,6 +102,7 @@ __all__ = [
     "FactorizedFHMC",
     # smoke test
     "selftest",
+    "term_contributions",
 ]
 
 
@@ -159,6 +160,50 @@ def _build_for_selftest(name: str, dim: int):
     if name == "composite":
         kwargs["components"]["protonce"]["dim"] = dim
     return build_loss({"name": name, **kwargs})
+
+
+def term_contributions(names=None, batch_size: int = 256, dim: int = 256,
+                       floor: float = 1e-3, verbose: bool = True) -> dict:
+    """Weighted share of the total that each term of a multi-term loss carries.
+
+    Three separate defects in this project were all the same shape: a term that
+    is present, differentiable, logged every epoch, and contributing nothing.
+    ProtoNCE's live-positive shortcut, the composite warmup counter that was
+    never advanced (lambda_1 == 0 for entire runs), and FHMC's disentanglement
+    penalty, which was expressed as a cross-covariance between unit-norm
+    embeddings and so read 5.8e-07 while the heads it was meant to separate had
+    cross-correlations up to 0.788.  None of them crashed and none of them
+    showed up in a loss curve.
+
+    A term whose weighted contribution is below ``floor`` of the total is
+    reported as ``inoperative`` -- not an error (a term can legitimately be
+    switched off), but never again something that has to be noticed by hand.
+    """
+    fns = list(names) if names else list_losses()
+    out: dict = {}
+    for name in fns:
+        fn = _build_for_selftest(name, dim)
+        weights = getattr(fn, "lambdas", None) or getattr(fn, "weights", None) or {}
+        if not isinstance(weights, dict) or len(weights) < 2:
+            continue  # single-term loss: the question does not arise
+        z_eeg, z_vid, meta = make_dummy_batch(seed=0, batch_size=batch_size, dim=dim)
+        logs = fn(z_eeg, z_vid, meta).get("logs", {})
+        raw = {k[: -len("/raw")]: float(v) for k, v in logs.items() if k.endswith("/raw")}
+        weighted = {k: float(weights.get(k, 0.0)) * v for k, v in raw.items()}
+        total = sum(abs(v) for v in weighted.values())
+        out[name] = {
+            k: {"raw": raw[k], "weight": float(weights.get(k, 0.0)), "weighted": v,
+                "share": (abs(v) / total if total > 0 else 0.0),
+                "inoperative": bool(total > 0 and abs(v) / total < floor)}
+            for k, v in weighted.items()
+        }
+        if verbose:
+            print(f"\n{name}:")
+            for k, d in sorted(out[name].items(), key=lambda kv: -kv[1]["share"]):
+                flag = "  <-- INOPERATIVE" if d["inoperative"] else ""
+                print(f"   {k:14s} raw={d['raw']:12.4e}  w={d['weight']:6.3f}  "
+                      f"share={d['share']:8.2%}{flag}")
+    return out
 
 
 def selftest(
@@ -261,3 +306,5 @@ def selftest(
 
 if __name__ == "__main__":  # pragma: no cover
     selftest()
+    print("\n=== weighted term contributions (multi-term losses) ===")
+    term_contributions()
