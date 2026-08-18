@@ -78,6 +78,12 @@ class MyLoss(ContrastiveLoss):
 from .my_loss import MyLoss
 ```
 
+That second edit is the one that gets forgotten, and forgetting it is silent: the
+file exists, the class is written, and `loss.name: my_loss` raises "unknown loss"
+only when a job starts. It is how this repository's own flagship objective went
+unrun. `tests/test_loss_registry_complete.py` fails if any loss file declares
+`@register_loss` without a matching import line, and names the line to add.
+
 Then a config with one changed key (`loss.name: my_loss`) and:
 
 ```bash
