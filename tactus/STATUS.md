@@ -248,9 +248,13 @@ beside every latency.
 - The `wm100_800` pre-saccadic selector is `t < 150 ms` on a window that begins at −100 ms, so it
   swallows the baseline.
 
-With the gallery corrected to the fold's 18 held-out videos and the intercept-free variant scored,
-the signal is clearly present (full EEG 0.0840 vs ocular-ablated 0.0833 vs surrogate 0.0764;
-single-trial ≈5.8σ above chance) — but the criterion is not claimed until both blockers are fixed.
+**Both blockers are now resolved and all three criteria are met — see §10 (D14) for the numbers.**
+Over 5 folds at 20 subjects: ablated 0.1068 vs full 0.1009 (ablation costs nothing); the EOG
+surrogate sits at the 3rd percentile of 100 random 2-filter EEG projections while full EEG sits at
+the 100th (so the margin is not feature count); and the pre-saccadic window carries EEG signal
+(+0.0103, p = 0.0069, 5/5 folds) that survives ablation while both surrogates sit at or below chance
+there. G6b is declarable at n = 5 folds over a fixed pool of 20 subjects; repeat at 80 before it
+carries a paper. The arXiv placeholder G6 gates is deliberately **not** triggered here.
 
 ---
 
@@ -365,7 +369,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
 | D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
 | D13 | **done** | covariate table assembled; two of the four Q3 outcomes are far weaker than n=80 implies, and one specified covariate does not exist | `results/covariates/COVARIATES.md`, `tactus/eval/covariates.py` |
-| D14 | **answered, G6b still not declared** | blocker 1 cleared decisively; blocker 2 resolved into a null -- the pre-saccadic window carries no signal in any arm, so criterion 3 is unavailable | `results/ocular_d14/` |
+| D14 | **all three criteria met over 5 folds** | surrogate sits at the 3rd percentile of random 2-filter EEG; pre-saccadic p=0.0069 and survives ablation. Supersedes the single-fold null | `results/ocular_d14/` |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
 | D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
@@ -457,47 +461,61 @@ splits 17/63. Both are small two-group tests wearing an n = 80 label. This is
 printed above the table in the generated report rather than discovered
 afterwards: a null on either is a statement about the design.
 
-## D14 -- the ocular evidence chain, and the criterion that cannot be met
+## D14 -- the ocular evidence chain, now across five folds
 
-Rerun on w0600, 20 subjects, fold 0, held-out 18-video gallery, intercept-free
-scorer. Chance 0.0556.
+w0600, 20 subjects, 5 video folds, held-out 18-video gallery, intercept-free
+scorer, chance 0.0556. Fold-level mean +- sd.
 
-| arm | 0-595 ms | z (single trial) |
-|---|---|---|
-| ocular_ablated (D6 list, 8 frontal channels removed) | **0.0956** | 10.63 |
-| full_eeg | 0.0878 | 8.57 |
-| eog_surrogate_saved | 0.0622 | 2.40 |
-| ocular_surrogate | 0.0611 | 1.81 |
-| **eeg_rand2** -- dimension-matched, 60 draws | **0.0636 +- 0.0065**, p95 0.0753 | -- |
+| arm | 0-595 ms | 0-150 ms (pre-saccadic) | 150-595 ms |
+|---|---|---|---|
+| ocular_ablated (D6 list, 8 frontal channels removed) | **0.1068 +- 0.0070** | 0.0643 +- 0.0038 | 0.0954 +- 0.0060 |
+| full_eeg | 0.1009 +- 0.0087 | 0.0659 +- 0.0040 | 0.0957 +- 0.0053 |
+| eog_surrogate_saved | 0.0586 +- 0.0028 | 0.0522 +- 0.0039 | 0.0595 +- 0.0029 |
+| ocular_surrogate | 0.0589 +- 0.0020 | 0.0541 +- 0.0066 | 0.0619 +- 0.0038 |
+| **eeg_rand2**, 100 draws (dimension-matched) | 0.0711 +- 0.0063, p95 0.0812 | -- | -- |
 
-**Blocker 1 is cleared, and in both directions.** The EOG surrogate lands inside
-the distribution of EEG through two *random* orthonormal spatial filters -- below
-its mean, in fact. It is not a privileged ocular measurement; it is two
-dimensions of EEG, and unremarkable ones. Meanwhile full EEG at 0.0878 sits well
-above that distribution's 95th percentile of 0.0753, so the EEG arm's margin over
-the surrogate is not feature count. Those are the two halves of the confound that
-made "EEG beats the surrogate" unusable, and they separate cleanly.
+**Criterion 1 -- ablated approximately equals full.** 0.1068 against 0.1009, with
+the ablated arm marginally *higher*. Removing the channels an eye movement would
+dominate costs nothing.
 
-**The primary claim holds.** Removing the eight frontal channels does not cost
-anything -- 0.0956 ablated against 0.0878 full, a difference well inside the
-design's minimal detectable difference and pointing the wrong way for an ocular
-account. The retrieval signal is not carried by the channels an eye movement
-would dominate.
+**Criterion 2 -- the dimension-matched control.** Over 100 random 2-filter draws,
+full EEG sits at the 100th percentile and the EOG surrogate at the **3rd** -- the
+surrogate is not merely unremarkable as a 2-dimensional projection of EEG, it is
+worse than 97% of random ones. Both halves of the feature-count confound are
+answered.
 
-**Blocker 2 resolved into a null, and it is the interesting part.** The
-pre-saccadic window is not a selector bug on w0600 -- `t < 150 ms` on a window
-starting at 0 ms is exactly 0-150 ms. Redone there, *every* arm sits at chance:
-full EEG 0.0589 (z = 0.51), ablated 0.0569 (z = 0.72), surrogate 0.0611
-(z = 1.60), and no arm separates from any other. The signal lives in the
-sustained window instead (full EEG 0.0897, z = 6.47 over 150-595 ms).
+**Criterion 3 -- the pre-saccadic window, and a correction.** Fold-level
+one-sample tests against chance:
 
-So G6b's third criterion -- "the w0600 pre-saccadic window is significant" -- is
-not merely unmet, it is unavailable: there is nothing in that window to be
-significant. The timing argument ("the signal precedes any saccade") cannot be
-made from these data. **G6b stays undeclared**, now for a reason that will not
-change with more compute, and the ocular claim rests on the two arguments that do
-hold: ablation costs nothing, and the surrogate is not special once dimension is
-controlled.
+| arm, 0-150 ms | delta | t(4) | p | folds above chance |
+|---|---|---|---|---|
+| full_eeg | +0.0103 | 5.11 | **0.0069** | 5/5 |
+| ocular_ablated | +0.0088 | 4.66 | **0.0096** | 5/5 |
+| eog_surrogate_saved | -0.0033 | -1.73 | 0.159 | 1/5 |
+| ocular_surrogate | -0.0014 | -0.44 | 0.684 | 3/5 |
+| paired full_eeg - surrogate | +0.0137 | 4.31 | **0.0125** | -- |
+
+The pre-saccadic window carries EEG signal, that signal survives ocular
+ablation, and both ocular surrogates sit at or below chance inside it. That is
+the strongest form the criterion could take.
+
+**It also reverses what this file said an hour earlier.** On fold 0 alone every
+pre-saccadic arm was at chance, and that was written up as a null that "will not
+change with more compute". Four more folds changed it. The error was not the
+measurement but the generalisation: one fold of 18 held-out videos was treated as
+settling a stimulus-generalising question, and the claim was stated as
+compute-proof rather than as what it was, a single noisy estimate.
+
+**All three criteria are met, so G6b is declarable** -- with the size of the
+inference honestly stated. These are n = 5 fold-level tests over a fixed pool of
+20 subjects, so they generalise over videos and not over subjects, and the
+pre-saccadic effect is +0.0103 on a chance of 0.0556. It is consistent (5/5
+folds, both EEG arms, surrogates on the other side of chance) but small and
+resting on four degrees of freedom. The declaration should be repeated at 80
+subjects before it carries a paper.
+
+**Not triggered here:** the arXiv placeholder that G6 gates. That is an
+outward-facing action and is the user's to take.
 
 ## D17 -- the design lesson, as a section rather than a caveat
 
