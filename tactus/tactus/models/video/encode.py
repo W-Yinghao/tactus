@@ -7,7 +7,17 @@ Output: ``data/derived/video_emb/{model_tag}.npz`` with
   ``condition_id = (video_id - 1) * 4 + orientation``
 * ``base_emb`` ``(90, D)`` float32, L2-normalized, indexed by ``video_id - 1``
   (original orientation only)
+* ``frame_emb`` ``(360, n_frames, D)`` float32, L2-normalized per row, written
+  only with ``--save-frame-emb`` and only for the ``image_clip`` family
 * ``meta`` -- a JSON string with model name, pooling, ``n_frames`` and provenance
+
+**Provenance is part of the contract.** A cache built on CUDA with ``--fp16`` and
+one built on CPU in float32 are not bit-identical: measured on siglip2-base, the
+two agree at cosine 0.9999982 (min 0.9999849) and give the same top-1 nearest
+video for 89 of 90 stimuli. That is numerics, not a defect, but it means a
+``frame_emb`` array must be used with the ``cond_emb`` from *its own* file rather
+than with the canonical one -- inside one file the pooled vector reproduces the
+frame mean at cosine 0.99999985.
 
 Why all 360 conditions and not just 90: a mirrored touch video is a *visually
 different stimulus*, and the orientation-equivariance analysis (BLUEPRINT_v2

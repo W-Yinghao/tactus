@@ -369,7 +369,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
 | D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
-| D18 | **contract extended, encoding** | `--save-frame-emb` writes `frame_emb (360, 15, D)`; verified the pooled vector is exactly its mean (cos 0.99999988 native *and* reversed) | `tactus/models/video/encode.py` |
+| D18 | **contract extended and sized** | `frame_emb (360, 15, 768)` built; the time axis is 14.4% of the video-side variance and diffuse | `derived/video_emb/siglip2-base-frames.npz` |
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, negative** | the flagship arm was unrunnable, then ran, then turned out to have an inoperative disentangler; see below | `results/probes_fhmc_ws/PROBES.md`, `results/report_fhmc_ws/REPORT.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
@@ -512,6 +512,39 @@ is the only attribute crossed with video by design, it is the only one whose
 `majority_over_uniform` is exactly 1.0, and it is the only one whose MVPA
 replicates. The others are sampled naturalistically -- `object` alone reaches
 8.4x -- which is what a majority-class predictor collects for free.
+
+## D18 -- the time axis exists, is 14% of the variance, and is diffuse
+
+Contract C now carries `frame_emb (360, 15, 768)`. The first thing it settles is
+that "frame order is invisible to SigLIP2" was never a finding about SigLIP2: for
+the image_clip family the clip vector *is* the arithmetic mean of these rows, so
+the native and the reversed ordering both reproduce the cached pooled vector at
+cosine 0.99999988. A mean is permutation-invariant by arithmetic.
+
+The second thing it settles is how much a time-resolved Q2 can possibly gain, on
+the 90 native-orientation clips:
+
+| quantity | value |
+|---|---|
+| between-video variance | 85.6% |
+| **within-clip (temporal) variance** | **14.4%** |
+| mean cosine between frames of one clip | 0.9793 |
+| mean cosine between different clips (pooled) | 0.8817 |
+
+So 14.4% is the entire budget a time axis can spend, and only the part of it the
+EEG can read is reachable. It is not nothing -- but it is diffuse rather than
+structured. After removing each clip's own mean, which is exactly what the pooled
+vector discards, the leading component of the remainder correlates with frame
+index at mean |r| = 0.536 and exceeds 0.8 for only 16 of 90 clips, and that
+component carries just 6.2% of the temporal variance. There is no single "time
+direction" to project onto; a time-resolved analysis has to work with a spread-out
+signal.
+
+One provenance note that travels with the file. The canonical cache was built on
+CUDA with fp16 and this one on CPU in fp32, so they agree at cosine 0.9999982 and
+give the same top-1 nearest video for 89 of 90 stimuli rather than 90. Use
+`frame_emb` with the `cond_emb` from its own file -- inside one file the pooled
+vector reproduces the frame mean at cosine 0.99999985.
 
 ## D19 -- the MVPA null is a metric difference, and the design says which one
 
