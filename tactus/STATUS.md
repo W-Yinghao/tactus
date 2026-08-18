@@ -365,11 +365,11 @@ own paragraphs below because they govern which numbers may leave this repository
 | D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
 | D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
 | D13 | **done** | covariate table assembled; two of the four Q3 outcomes are far weaker than n=80 implies, and one specified covariate does not exist | `results/covariates/COVARIATES.md`, `tactus/eval/covariates.py` |
-| D14 | open | needs the `w0600` pre-saccadic redo and the dimension-matched control | -- |
+| D14 | **control built, running** | dimension-matched arm implemented (EEG through 2 random orthonormal spatial filters, the surrogate's exact shape); w0600 x 20 subjects x heldout gallery in flight | `tactus/eval/run_ocular.py --dim-matched-reps` |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
 | D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
-| D18 | open | needs the `frame_emb (360, 15, D)` contract-C extension | -- |
+| D18 | **contract extended, encoding** | `--save-frame-emb` writes `frame_emb (360, 15, D)`; verified the pooled vector is exactly its mean (cos 0.99999988 native *and* reversed) | `tactus/models/video/encode.py` |
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, negative** | the flagship arm was unrunnable, then ran, then turned out to have an inoperative disentangler; see below | `results/probes_fhmc_ws/PROBES.md`, `results/report_fhmc_ws/REPORT.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
