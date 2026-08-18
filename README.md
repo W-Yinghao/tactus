@@ -17,15 +17,20 @@ Chance = 5.56%.
 
 | Regime / arm | Folds | Primary | 95% CI | Perm p | Frac. of ceiling |
 |---|---|---|---|---|---|
-| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | 0.614 |
-| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 0.674 |
-| within_subject · EA+ridge (linear floor) | 5 | 10.09% | 9.69–10.48 | 0.001 | ≈0.57 |
+| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | — |
+| within_subject · FHMC (flagship) | 5 | 10.88% | 10.36–11.41 | 0.0002 | — |
+| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 0.814 |
+| within_subject · EA+ridge (linear floor) | 5 | 9.89% | 9.47–10.29 | 0.001 | — |
 | **double_disjoint · NICE+ProtoNCE** | **40** | **10.45%** | 9.98–10.92 | **0.0002** | **0.835** |
 
 The double-disjoint cell (5 video folds × 8 subject folds, every subject held out once per video
-fold) is the headline. It sits 1.5 points below the within-subject number while recovering a
-**larger** share of what the data supports — 83.5% of the split-half noise ceiling versus 67.4% —
-because the cross-subject ceiling is itself lower.
+fold) is the headline. It sits 1.5 points below the within-subject number while recovering a slightly **larger** share of
+what the data supports — 83.5% of the split-half noise ceiling versus 81.4%.
+
+Both ceiling fractions are computed against a gallery pinned at 10 subjects. Until that was pinned
+the two regimes were divided by different denominators and the gap read 16 points rather than 2; see
+`STATUS.md` §10 (D15), which also states why only the raw accuracies and CIs should leave this
+repository for now.
 
 Permutation inference uses the **source video** as the exchangeable unit. The trial-level null is
 computed only to show it is 3.5–4.1× too narrow; it never supplies a reported p-value.
@@ -42,7 +47,7 @@ tactus/
   tactus/
     data/                download, event parsing, preprocessing, splits, QC
     models/              EEG encoders, subject conditioning, video towers, FM wrappers
-    losses/              the swap point -- 9 contrastive objectives behind one registry
+    losses/              the swap point -- 10 contrastive objectives behind one registry
     baselines/           MVPA, CorrCA/ISC, SRM, EA+ridge
     eval/                retrieval, permutation, noise ceilings, RSA, probes, reports
     train/               trainer and fold runner
@@ -92,7 +97,7 @@ zero looks identical to a working one in the logs. See
 
 ```bash
 bash slurm/setup_env.sh                     # conda env `tactus`
-python -m tactus.losses                     # 9 losses x 8 adversarial batches
+python -m tactus.losses                     # 10 losses x 8 adversarial batches, then term shares
 python -m tactus.models.selftest --all-registered
 pytest tests/ -q
 
@@ -112,9 +117,9 @@ run artefacts live under `$TACTUS_WORK` and are reproducible from the code here.
 
 ## Notes on the results
 
-Read `STATUS.md` §7 before trusting any number in a fork. Every module executed for the first time
-had at least one real defect, and almost none of them crashed — they produced plausible numbers.
-The three that would have invalidated a published result:
+Read `STATUS.md` §7 and §10 before trusting any number in a fork. Every module executed for the
+first time had at least one real defect, and almost none of them crashed — they produced plausible
+numbers. The four that would have invalidated a published result:
 
 - the prototype objective was solvable **without any EEG–video relationship** (100% training
   accuracy on pure-noise EEG) until `live_positive` was pinned off;
@@ -122,7 +127,14 @@ The three that would have invalidated a published result:
   exactly 0 for entire runs;
 - `transformers` 5.15 loads **any** published VideoMAE checkpoint with its trained q/v attention
   biases silently zero-filled (no `_checkpoint_conversion_mapping`) — repairing it changed the
-  top-1 nearest video for 61% of the 90 stimuli.
+  top-1 nearest video for 61% of the 90 stimuli;
+- the flagship objective's disentanglement penalty was a cross-covariance between L2-normalized
+  heads, so it scaled as 1/(d_a·d_b) and read 5.8e-07 while the coordinates it was meant to
+  separate were correlated at 0.788 — the term the architecture is named for never applied.
+
+Three of those four are the same shape: a term or a cache that is present, exercised, logged, and
+inert. `tactus.losses.term_contributions()` and the cache fingerprints exist because noticing them
+by hand worked only by luck.
 
 ## License and data
 

@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-08-17T07:30Z)
+# TACTUS STATUS  (updated 2026-08-18T16:20Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a** passed. **G6b (ocular) deliberately not declared** — see §6.
@@ -355,13 +355,120 @@ Self-tests at time of writing: **72/72** loss scenarios, **33/33** model contrac
 
 ---
 
+# 10. DECISIONS D11-D22 execution log
+
+One line per decision as it closes, with the evidence path. D15 and D19 get their
+own paragraphs below because they govern which numbers may leave this repository.
+
+| D | status | one line | evidence |
+|---|---|---|---|
+| D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
+| D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
+| D13 | open | split-half ceiling is computed; the covariate set still has to be assembled | -- |
+| D14 | open | needs the `w0600` pre-saccadic redo and the dimension-matched control | -- |
+| D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
+| D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
+| D17 | open | collinearity matrix written; the design-lesson section is not | -- |
+| D18 | open | needs the `frame_emb (360, 15, D)` contract-C extension | -- |
+| D19 | open | companion-metric recomputation not started | -- |
+| D20 | **done, negative** | the flagship arm was unrunnable, then ran, then turned out to have an inoperative disentangler; see below | `results/probes_fhmc_ws/PROBES.md`, `results/report_fhmc_ws/REPORT.md` |
+| D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
+| D22 | running | offline line done (D11/D12); training line is FHMC dd (40 folds) + the fixed arm | -- |
+
+## D15 -- the answer, and what may be quoted
+
+The split-half ceiling averages each gallery item over **every subject the caller
+passes**, so its cleanliness scales with the fold's subject count. Measured on one
+within_subject fold, 10/20/40/80 subjects give 0.1133 / 0.1317 / 0.1497 / 0.1633.
+A within_subject fold carries 80 test subjects; a double_disjoint fold carries 10.
+The two "fraction of ceiling" figures being compared were therefore divided by
+different denominators, and most of the 16-point gap was fold design rather than
+model behaviour.
+
+With the gallery pinned at 10 subjects (`--ceiling-subjects`, the largest value
+both regimes can supply):
+
+| regime | raw | common ceiling | fraction |
+|---|---|---|---|
+| within_subject | 11.93% | 0.1465 | 0.814 (was 0.674) |
+| double_disjoint | 10.45% | 0.1253 | 0.835 |
+
+The direction survives, the magnitude does not: the gap is ~2 points, not ~16.
+The denominators are still not strictly identical (different subject sets, different
+video sets), so **only the raw accuracy and its CI may be quoted externally** until
+a single n=80 subject-level ceiling exists.
+
+## D20 -- the flagship arm, and why it does not support contribution 2
+
+Three findings, in the order they were forced out.
+
+1. **It had never run.** `losses/factorized.py` existed but was not imported, so
+   `@register_loss` never executed and `loss.name: factorized` raised "unknown loss".
+   The evidence had been visible for days: BLUEPRINT_v3 documents an 80/80 regression
+   battery and this repository was reporting 72/72. The missing eight were FHMC.
+
+2. **It ran, and lost.** within_subject, 5 folds, primary endpoint: **10.88%**
+   (95% CI 10.36-11.41), video-level permutation p = 0.0002, z = 12.45. That is below
+   NICE+ProtoNCE (11.93%) and below plain NICE+InfoNCE (10.99%).
+
+3. **The term the architecture is named for was inoperative.** `disent` was a squared
+   cross-*covariance* between two L2-normalized heads, so it scaled as
+   1/(d_content x d_geometry). It read 5.8e-07 at epoch 0 and fell from there;
+   weighted by lambda=0.1 that is 6e-08 of a loss of magnitude 9. On the same trained
+   checkpoint the largest cross-correlation between a content and a geometry
+   coordinate was **0.788**.
+
+The probe table is what an inoperative constraint predicts (subject-grouped CV for
+stimulus attributes, video-grouped CV for subject identity, probing trial averages):
+
+| subspace | video (18) | orientation (4) | subject (80) | 18-way retrieval retained |
+|---|---|---|---|---|
+| trunk | 0.231 | 0.577 | 0.969 | 0.122 |
+| content | 0.255 | **0.595** | 0.887 | 0.126 |
+| geometry | 0.223 | **0.604** | 0.639 | 0.065 |
+| semantic | 0.244 | 0.596 | 0.836 | 0.105 |
+
+The flip-**invariant** content head decodes orientation as well as the
+flip-**equivariant** geometry head. The three factors are near-redundant projections
+of the trunk. Subject identity is decodable at 0.887 from the "content" subspace
+under video-grouped CV -- though note this is the within_subject regime, where the
+encoder has seen all 80 subjects and carries subject-conditioned parameters by
+design, so the number that settles the subject-invariance claim is the
+double_disjoint one, which is still running.
+
+`configs/factorized_fhmc_disent.yaml` re-runs the objective with a scale-free
+cross-correlation penalty. Both arms will be reported: this is the before and after
+of a defect, not a hyperparameter search.
+
+## The recurring shape
+
+Three defects in this project have now been the same thing -- a loss term that is
+present, differentiable, logged every epoch, and contributing nothing: ProtoNCE's
+live-positive shortcut, the composite warmup counter that never advanced, and this
+disentangler. None crashed; none showed up in a loss curve.
+`tactus.losses.term_contributions()` now reports each term's weighted share of the
+total and flags anything below 1e-3, and `tests/test_disentangler_scale.py` carries
+a test asserting the old formulation fails the file, so the guard cannot quietly
+stop biting.
+
+Two cache defects of the same family surfaced alongside it. The condition-average
+cache was keyed on window/split/decim but not on the epochs it was built from, so a
+re-epoched sub-17 kept two-day-old averages and CorrCA returned byte-identical
+results; and running folds in parallel made every `linear_align` process write
+`summary.json` from only its own fold, last writer wins, once reporting a headline
+from one fold while five sat on disk. Both now carry a fingerprint and a warning.
+
+---
+
 ## DECISIONS_NEEDED
 
-1. **sub-17.** Clamping is not a silent repair — it changes that subject's condition-average
-   pattern beyond recognition (r = 0.162) because 99.75% of its energy is artefact. Clamp, exclude,
-   or interpolate is a protocol choice, not a bug fix.
-2. **Centring convention.** `srm.py` removes the training mean from prediction *and* gallery;
-   `linear_align.py` removes it from the query only. Two baselines, one endpoint, two conventions.
+1. ~~**sub-17.**~~ **Resolved by D11** — interpolated (spherical spline, before the reference).
+   Post-fix the subject is unremarkable: worst channel SD ratio 80.10 -> 1.54, peak |x| after
+   scaling 33297.9 -> 18.6, samples beyond 20 sigma 3.75e-03 -> 0. It now sits below the clamp
+   threshold, so the "clamping destroys its pattern" dilemma is gone rather than traded off.
+2. ~~**Centring convention.**~~ **Resolved by D12** — query *and* gallery, defined once in
+   `tactus/eval/retrieval.py`. Worth 0.002 against a CI of width 0.008; adopted on principle
+   (training-only statistics), not for accuracy.
 3. **Which SNR regressor Q3 uses.** The repaired scale-invariant per-subject ISC correlates only
    ρ = 0.61 with the old one, and ρ = 0.19 with split-half reliability once the onset ERP is
    removed. Any phenotype analysis built on the old column has to be redone.
