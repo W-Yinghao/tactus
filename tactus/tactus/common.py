@@ -676,11 +676,28 @@ def condition_averages(
     if split not in {"all", "odd", "even"}:
         raise ValueError(f"split must be all|odd|even, got {split!r}")
     cache = None
+    source_key = ""
     if cache_dir is not None:
         cache = Path(cache_dir) / f"sub-{int(subject_id):02d}_{store.window}_{split}_d{decim}.npz"
+        # The key holds the parameters but says nothing about the *input*, so a
+        # reprocessed subject silently kept its old averages: sub-17 was
+        # re-epoched with its bad channel interpolated and CorrCA came back
+        # byte-identical, because this file had not moved.  Stamp the source
+        # memmap's (size, mtime) into the cache and treat a mismatch as a miss.
+        try:
+            st = store.path(int(subject_id)).stat()
+            source_key = f"{st.st_size}:{st.st_mtime_ns}"
+        except OSError:
+            source_key = ""
         if cache.exists():
             with np.load(cache) as z:
-                return np.asarray(z["avg"], np.float32), np.asarray(z["counts"], np.int32)
+                cached_key = str(z["source_key"]) if "source_key" in z else ""
+                if cached_key == source_key and source_key:
+                    return (np.asarray(z["avg"], np.float32),
+                            np.asarray(z["counts"], np.int32))
+            log.info("condition_averages: sub-%02d cache is stale (source %s, "
+                     "cached %s) -- recomputing", int(subject_id),
+                     source_key or "?", cached_key or "unstamped")
 
     sub = trials.loc[trials["subject_id"] == int(subject_id)]
     if split != "all":
@@ -705,7 +722,7 @@ def condition_averages(
         counts[c] = int(m.sum())
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, avg=avg, counts=counts)
+        np.savez_compressed(cache, avg=avg, counts=counts, source_key=source_key)
     return avg, counts
 
 
