@@ -752,8 +752,18 @@ def _as_feature_tensor(out):
     )
 
 
-def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor, device: str) -> np.ndarray:
-    """Embed one clip to a single L2-normalized vector ``(D,)``."""
+def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor,
+               device: str, return_frames: bool = False):
+    """Embed one clip to a single L2-normalized vector ``(D,)``.
+
+    With ``return_frames`` the result is ``(vec, per_frame)`` where ``per_frame``
+    is ``(n_frames, D)`` L2-normalized, or ``None`` for the families that do not
+    decompose that way.  Only ``image_clip`` does: its clip vector *is* the mean
+    of per-frame vectors, which is why frame order is invisible to it -- a mean
+    is permutation-invariant by arithmetic, not by any property of the encoder
+    (DECISIONS D18).  ``xclip``, ``videomae_v2`` and ``video_ssl`` mix frames
+    inside the backbone and have no per-frame vector to hand back.
+    """
     import torch
     import torch.nn.functional as F
 
@@ -765,13 +775,16 @@ def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor, 
                       for k, v in inputs.items()}
             feats = _as_feature_tensor(model.get_image_features(**inputs))  # (n_frames, D)
             feats = F.normalize(feats.float(), dim=-1)
+            per_frame = feats if return_frames else None
             vec = feats.mean(dim=0)
         elif spec.family == "xclip":
+            per_frame = None
             inputs = _video_inputs(processor, frames)
             inputs = {k: v.to(device=device, dtype=dtype if v.is_floating_point() else v.dtype)
                       for k, v in inputs.items()}
             vec = _as_feature_tensor(model.get_video_features(**inputs)).float().reshape(-1)
         elif spec.family == "videomae_v2":
+            per_frame = None
             # This backbone is a Conv3d patch embed: it wants (B, C, T, H, W), not the
             # (B, T, C, H, W) every transformers video processor emits.
             inputs = _video_inputs(processor, frames)
@@ -781,6 +794,7 @@ def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor, 
             px = px.permute(0, 2, 1, 3, 4).contiguous()  # (B, T, C, H, W) -> (B, C, T, H, W)
             vec = model.extract_features(px).float().reshape(-1)
         elif spec.family == "video_ssl":
+            per_frame = None
             inputs = _video_inputs(processor, frames)
             inputs = {k: v.to(device=device, dtype=dtype if v.is_floating_point() else v.dtype)
                       for k, v in inputs.items()}
@@ -798,7 +812,11 @@ def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor, 
         else:
             raise ValueError(f"unknown family {spec.family!r}")
         vec = F.normalize(vec, dim=-1)
-    return vec.detach().cpu().numpy().astype(np.float32)
+    out = vec.detach().cpu().numpy().astype(np.float32)
+    if not return_frames:
+        return out
+    pf = None if per_frame is None else per_frame.detach().cpu().numpy().astype(np.float32)
+    return out, pf
 
 
 # ======================================================================================
@@ -808,6 +826,11 @@ def embed_clip(frames: Sequence[np.ndarray], spec: ModelSpec, model, processor, 
 
 def _shard_path(cache_dir: Path, cid: int) -> Path:
     return cache_dir / f"cond_{cid:03d}.npy"
+
+
+def _frame_shard_path(cache_dir: Path, cid: int) -> Path:
+    """Per-frame shard, kept beside the pooled one so both invalidate together."""
+    return cache_dir / "frames" / f"cond_{cid:03d}.npy"
 
 
 def build_cache(
@@ -824,6 +847,7 @@ def build_cache(
     frame_order: str = "native",
     frame_order_seed: int = DEFAULT_FRAME_ORDER_SEED,
     verify_weights: bool = True,
+    save_frame_emb: bool = False,
 ) -> Path:
     """Compute (or resume) the embedding cache and write ``{out_dir}/{tag}.npz``."""
     if frame_order not in FRAME_ORDERS:
@@ -902,7 +926,15 @@ def build_cache(
                 # permutation is exactly over the frames the encoder is about to see.
                 if frame_order != "native":
                     frames = reorder_frames(frames, perms[cid])
-                vec = embed_clip(frames, spec, model, processor, device)
+                if save_frame_emb:
+                    vec, pf = embed_clip(frames, spec, model, processor, device,
+                                         return_frames=True)
+                    if pf is not None:
+                        fp = _frame_shard_path(cache_dir, cid)
+                        fp.parent.mkdir(parents=True, exist_ok=True)
+                        np.save(fp, pf)
+                else:
+                    vec = embed_clip(frames, spec, model, processor, device)
                 np.save(_shard_path(cache_dir, cid), vec)
                 done += 1
                 if done % 20 == 0 or done == len(todo):
@@ -932,6 +964,22 @@ def build_cache(
         raise RuntimeError(f"embeddings are not L2-normalized (norm range {norms.min()}..{norms.max()})")
     base_emb = cond_emb[[condition_id(v, 0) for v in range(1, N_VIDEOS + 1)]].copy()
 
+    # Contract C extension (DECISIONS D18): the order-preserving array.  The
+    # pooled cond_emb cannot answer any question about time -- its clip vector is
+    # the arithmetic mean of these rows, so reversing or shuffling the frames
+    # leaves it bit-identical.  frame_emb keeps the axis the mean deletes.
+    frame_emb = None
+    if save_frame_emb:
+        fshards = [_frame_shard_path(cache_dir, cid) for cid in range(N_CONDITIONS)]
+        if all(fp.exists() for fp in fshards):
+            frame_emb = np.stack([np.load(fp).astype(np.float32) for fp in fshards])
+            print(f"[encode]   frame_emb={frame_emb.shape}")
+        else:
+            n_missing = sum(1 for fp in fshards if not fp.exists())
+            print(f"[encode]   frame_emb NOT written: {n_missing}/{N_CONDITIONS} frame "
+                  f"shards missing. {spec.family!r} mixes frames inside the backbone "
+                  "and has no per-frame vector; only the image_clip family does.")
+
     video_id = np.repeat(np.arange(1, N_VIDEOS + 1, dtype=np.int16), N_ORIENTATIONS)
     orientation = np.tile(np.arange(N_ORIENTATIONS, dtype=np.int8), N_VIDEOS)
     n_dec_arr = np.asarray(
@@ -945,6 +993,7 @@ def build_cache(
         "pooling": spec.pooling,
         "n_frames": n_frames,
         "embedding_dim": int(cond_emb.shape[1]),
+        "has_frame_emb": bool(save_frame_emb),
         "normalized": "l2",
         "n_conditions": N_CONDITIONS,
         "n_videos": N_VIDEOS,
@@ -977,6 +1026,7 @@ def build_cache(
         orientation=orientation,
         n_frames_decoded=n_dec_arr,
         frame_perm=perms,
+        **({"frame_emb": frame_emb} if frame_emb is not None else {}),
     )
     (out_dir / f"{tag}.meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(
@@ -1096,6 +1146,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:  # noqa: D103
     ap.add_argument("--device", default=None, help="cuda / cpu (default: cuda when available)")
     ap.add_argument("--fp16", action="store_true", help="half precision on CUDA")
     ap.add_argument("--force", action="store_true", help="recompute cached conditions")
+    ap.add_argument("--save-frame-emb", action="store_true",
+                    help="also write frame_emb (n_conditions, n_frames, D), the "
+                         "order-preserving array of contract C (DECISIONS D18). The "
+                         "pooled cond_emb is the arithmetic mean of these rows, so it "
+                         "is bit-identical under any frame permutation and cannot "
+                         "answer a question about time. Only the image_clip family "
+                         "decomposes this way; for the video backbones the flag is a "
+                         "no-op and the run says so.")
     ap.add_argument("--limit", type=int, default=None, help="compute at most N conditions (smoke test)")
     ap.add_argument(
         "--synthesize-flips",
@@ -1190,6 +1248,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:  # noqa: D103
         frame_order=args.frame_order,
         frame_order_seed=args.frame_order_seed,
         verify_weights=not args.no_verify_weights,
+        save_frame_emb=args.save_frame_emb,
     )
     return 0
 
