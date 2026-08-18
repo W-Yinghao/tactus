@@ -459,7 +459,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--tasks", required=True, help="'1-80' or '1,3,5-9'")
     s.add_argument("--cmd", required=True, help="shell command; {task} / {task02} substituted")
     s.add_argument("--workers", type=int, default=12)
-    s.add_argument("--partition", required=True)
+    s.add_argument("--partition", required=True,
+                   help="comma-separated slurm partitions. For GPU work use "
+                        "A100,L40S,H100 -- V100/P100/A30/3090 are excluded on "
+                        "purpose (see slurm/cluster.conf). Those fast partitions "
+                        "cap MaxTime at 24 h, so keep --time under it.")
     s.add_argument("--time", default="08:00:00")
     s.add_argument("--cpus", type=int, default=8)
     s.add_argument("--mem", default="64G")

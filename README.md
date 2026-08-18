@@ -93,7 +93,7 @@ Then a config with one changed key (`loss.name: my_loss`) and:
 
 ```bash
 python slurm/pool.py submit --name train_myloss --tasks 0-4 --workers 5 --gpus 1 \
-  --partition V100,P100,A30,A40,3090,L40S,A100 --time 08:00:00 --cpus 4 --mem 48G \
+  --partition A100,L40S,H100 --time 08:00:00 --cpus 8 --mem 48G \
   --cmd 'python -u -m tactus.train.run -c configs/my_loss.yaml --regime within_subject --folds {task}'
 ```
 
