@@ -104,6 +104,33 @@ and every loss reports `n_valid` and `degenerate` — plot them, because a term 
 zero looks identical to a working one in the logs. See
 [`tactus/tactus/losses/README.md`](tactus/tactus/losses/README.md).
 
+## Reading your result
+
+Five things this project got wrong at least once, in the order you will meet them.
+
+**Check the term shares before the accuracy.** `python -m tactus.losses` ends with
+`term_contributions()`, which prints each term's weighted share of the total and flags anything
+below 0.1% as inoperative. Three separate defects here were the same shape — a term that is
+present, differentiable, logged every epoch, and contributing nothing. The flagship objective's
+disentangler was a cross-covariance between L2-normalized heads, so it scaled as 1/(d·d) and read
+6e-08 of the loss while the subspaces it was meant to separate were correlated at 0.788.
+
+**Fold 4 is sealed.** It is the confirmation fold. Tune on folds 0–3; run fold 4 once, report it,
+and do not go back. A number that moved after you looked at it is not a confirmation.
+
+**Know what your design can resolve.** Section 1 of every generated report prints the minimal
+detectable difference: roughly 0.6–7 points for subject-level claims at n=80, 0.3–8 points for
+stimulus-generalising ones at n=90 videos. Differences below that are unresolved, not wins and not
+equivalence. A one-fold result is a stimulus-level claim with n=18 — this repository once wrote up
+a single fold as a settled null and four more folds reversed it.
+
+**Fraction-of-ceiling is a scale, not a discriminator.** The split-half denominator carries its own
+sampling noise (±0.09 on the fraction here), which is wider than the gaps between arms. Quote raw
+accuracy and its CI.
+
+**Permute source videos, not trials.** The trial-level null is 3.5–4.1× too narrow. It is computed
+and reported here only to show that.
+
 ## Running the pipeline
 
 ```bash
