@@ -391,6 +391,7 @@ def run_fold(
     alphas: Sequence[float] = RIDGE_ALPHAS,
     allow_stimulus_overlap: bool = False,
     standardize: str = "zscore",
+    subject_energy_norm: bool = True,
     seed: int = 0,
 ) -> List[Dict[str, Any]]:
     """Fit SRM on the training cells and evaluate every held-out subject.
@@ -466,13 +467,27 @@ def run_fold(
     # SRM and the control can never differ by anything except the projection.
     norm = {s: (matrices[s] - offset[s]) / scale[s] for s in subjects_here}
 
+    # Per-SUBJECT energy normalisation (DECISIONS D11).  feature_scale is a
+    # per-FEATURE operation, and that turns out not to be enough: with
+    # `--standardize robust` on the interpolated data one subject still carried
+    # 33.6-63.3% of the objective across the five within_subject folds, because a
+    # robust (IQR-based) scale under-reads a heavy-tailed subject and leaves its
+    # squared energy large after division.  Dividing each subject's training
+    # block by its own Frobenius norm makes the share uniform by construction
+    # for *any* feature scaling, which is what the decision actually asked for.
+    # Estimated on training columns only, like every other constant here.
+    if subject_energy_norm:
+        fro = {s: float(np.linalg.norm(norm[s][:, trc])) for s in subjects_here}
+        med_fro = float(np.median([v for v in fro.values() if v > 0]) or 1.0)
+        norm = {s: norm[s] / max(fro[s], 1e-12 * med_fro) for s in subjects_here}
+
     # Energy audit -- how much of `sum_k ||X_k - W_k S||^2` any single subject can
-    # buy.  Under `zscore` this is uniform by construction (every feature has unit
-    # training variance, so each subject contributes ~f * n_train), which is
-    # exactly the point; under `none` or `robust` it is the diagnostic that
-    # explains an SRM scoring below chance.  Measured on 80 subjects at w0600
-    # --decim 2: 93.2% for sub-17 under `none`, 65.4% under `robust`, uniform
-    # under `zscore`.
+    # buy.  Uniform by construction once subject_energy_norm is on, which is the
+    # point of running it after the block above rather than before.  Measured on
+    # 80 subjects at w0600 --decim 2, per-feature scaling only: 93.2% for sub-17
+    # under `none`, 65.4% under `robust`; after sub-17's PO4 was interpolated,
+    # `robust` still gave 33.6-63.3% across the five within_subject folds, which
+    # is what motivated the per-subject step.
     energy = {s: float(np.sum(norm[s][:, trc] ** 2)) for s in train_subjects}
     e_tot = sum(energy.values()) or 1.0
     worst_sid = max(energy, key=lambda s: energy[s])
@@ -481,7 +496,9 @@ def run_fold(
         log.warning(
             "fold %s: sub-%02d carries %.1f%% of the SRM objective (%d training "
             "subjects, uniform would be %.1f%%) -- the shared space is being spent "
-            "on one subject. --standardize is %r.",
+            "on one subject. --standardize is %r; note that per-feature scaling "
+            "alone has already been shown not to fix this, so the lever is "
+            "subject_energy_norm.",
             getattr(fold, "video_fold_id", "?"), worst_sid, 100 * worst_share,
             len(train_subjects), 100.0 / len(train_subjects), standardize,
         )
@@ -587,6 +604,7 @@ def run_fold(
                 "stimulus_disjoint": bool(n_overlap == 0),
                 "regime": str(getattr(fold, "regime", "?")),
                 "k": int(n_components), "standardize": str(standardize),
+                "subject_energy_norm": bool(subject_energy_norm),
                 "srm_objective_drop": float(loss_drop),
                 "srm_n_iter_run": int(len(srm.loss_)),
                 "worst_subject_objective_share": float(worst_share),
@@ -642,6 +660,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "columns before SRM. 'none' reproduces the pre-2026-08 "
                         "behaviour in which sub-17's blown PO4 carries 91%% of the "
                         "objective and SRM scores at or below chance.")
+    p.add_argument("--no-subject-energy-norm", dest="subject_energy_norm",
+                   action="store_false",
+                   help="skip the per-SUBJECT Frobenius normalisation. Per-feature "
+                        "scaling alone is not sufficient: under 'robust' one "
+                        "subject still carried 34-63%% of the objective across the "
+                        "five within_subject folds (DECISIONS D11).")
     p.add_argument("--enroll-fracs", default="1.0",
                    help="comma-separated fractions of training conditions used to "
                         "enroll a new subject, e.g. 0.1,0.25,0.5,1.0")
@@ -693,6 +717,7 @@ def resolved_config(args: argparse.Namespace, subjects: Sequence[int],
         "decim": int(args.decim),
         "feature_mode": args.feature_mode,
         "standardize": args.standardize,
+        "subject_energy_norm": bool(args.subject_energy_norm),
         "enroll_fracs": [float(f) for f in fracs],
         "to_video": bool(args.to_video),
         "model_tag": args.model_tag if args.to_video else None,
@@ -804,6 +829,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 gallery_sizes=sizes, alphas=alphas, seed=args.seed,
                 allow_stimulus_overlap=args.allow_stimulus_overlap,
                 standardize=args.standardize,
+                subject_energy_norm=args.subject_energy_norm,
             )
         except SkipFold as exc:
             n_skipped += 1
@@ -941,6 +967,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # kept at the top level for the older readers that grep for them
         "regime": args.regime, "k": args.k, "feature_mode": args.feature_mode,
         "standardize": args.standardize,
+        "subject_energy_norm": bool(args.subject_energy_norm),
         "model_tag": args.model_tag if args.to_video else None,
         "enrollment_curve": curve.to_dict("records"),
     })

@@ -1255,14 +1255,22 @@ def _headline_block(summary: Mapping[str, float], headline_key: str) -> Dict[str
     return {
         "key": headline_key,
         "variant": PRIMARY_VARIANT,
-        "variant_note": ("cosine after removing the fitted train-mean embedding "
-                         "from the QUERY only; the with-mean variant is emitted "
-                         "next to it as '%s'" % headline_key.replace("_nomean", "")),
+        "variant_note": ("cosine after removing the training mean from the QUERY "
+                         "and the GALLERY alike (DECISIONS D12; the convention is "
+                         "defined in tactus.eval.retrieval). The two superseded "
+                         "variants are emitted next to it as '%s' (no centring) "
+                         "and '%s' (query only)."
+                         % (headline_key.replace("_centered", ""),
+                            headline_key.replace("_centered", "_nomean"))),
         "fold_mean": summary.get(headline_key, float("nan")),
         "chance": summary.get(headline_key.replace("_top1", "_chance_top1"),
                               1.0 / PRIMARY_NWAY),
-        "with_mean_fold_mean": summary.get(headline_key.replace("_nomean", ""),
+        # Kept under their old names so the decision's before/after is readable
+        # straight out of summary.json.
+        "uncentred_fold_mean": summary.get(headline_key.replace("_centered", ""),
                                            float("nan")),
+        "query_only_fold_mean": summary.get(
+            headline_key.replace("_centered", "_nomean"), float("nan")),
     }
 
 
