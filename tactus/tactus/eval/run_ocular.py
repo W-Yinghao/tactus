@@ -319,6 +319,67 @@ def saved_eog_arms(
     return pd.concat(frames, ignore_index=True), diags
 
 
+def dimension_matched_arms(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    test_item_id: np.ndarray,
+    gallery_emb: np.ndarray,
+    gallery_item_ids: np.ndarray,
+    *,
+    times_ms: np.ndarray,
+    presaccadic_ms: float,
+    groups: Optional[np.ndarray],
+    subject_ids_test: Optional[np.ndarray],
+    cfg: Optional[RetrievalConfig],
+    probe_factory,
+    n_reps: int = 20,
+    seed: int = 0,
+) -> Tuple[pd.DataFrame, Dict[str, Dict[str, float]]]:
+    """EEG restricted to 2 *random* spatial filters -- the D14 dimension control.
+
+    "The EEG arm beats the EOG surrogate" compares 64 x n_bins ridge features
+    against 2 x n_bins, so it is confounded with feature count and cannot on its
+    own support an ocular claim.  The matched control keeps the surrogate's
+    structure exactly: HEOG and VEOG are each one linear combination of channels
+    with the time axis intact, so the control is two *random* linear combinations
+    of channels with the time axis intact.  Same probe, same folds, same gallery,
+    both prediction variants.
+
+    Two readings come out of it, and they answer different halves of the
+    confound.  Surrogate vs this distribution asks whether the ocular filters are
+    special or merely two dimensions of EEG.  Full EEG vs this distribution asks
+    how much of the EEG arm's advantage is dimensionality alone.
+
+    Filters are orthonormalised so a draw cannot accidentally be two copies of
+    nearly the same projection, which would make the control easier than the
+    surrogate rather than matched to it.
+    """
+    rng = np.random.default_rng(seed)
+    n_ch = x_train.shape[1]
+    frames: List[pd.DataFrame] = []
+    diags: Dict[str, Dict[str, float]] = {}
+    for rep in range(int(n_reps)):
+        r = rng.standard_normal((n_ch, 2))
+        q, _ = np.linalg.qr(r)                      # (n_ch, 2), orthonormal columns
+        p_tr = np.einsum("nct,cd->ndt", x_train, q)
+        p_te = np.einsum("nct,cd->ndt", x_test, q)
+        for suffix, keep_t in _windows_for(times_ms, presaccadic_ms):
+            a_tr = p_tr if keep_t is None else p_tr[:, :, keep_t]
+            a_te = p_te if keep_t is None else p_te[:, :, keep_t]
+            probe = probe_factory()
+            tag = f"eeg_rand2{suffix}_rep{rep:02d}"
+            frames.append(
+                probe.fit_evaluate(
+                    a_tr, y_train, a_te, test_item_id, gallery_emb, gallery_item_ids,
+                    groups=groups, subject_ids_test=subject_ids_test, cfg=cfg,
+                    tag=tag,
+                )
+            )
+            diags[tag] = dict(probe.diagnostics_)
+    return pd.concat(frames, ignore_index=True), diags
+
+
 def orientation_positive_control(
     x_train: np.ndarray,
     x_test: np.ndarray,
@@ -428,6 +489,7 @@ def run_ocular_battery(
     n_video_folds: int = 5,
     seed: int = 0,
     presaccadic_ms: float = 150.0,
+    dim_matched_reps: int = 0,
     n_time_bins: int = 20,
     n_pseudo_resamples: int = 10,
     pseudo_k: int = 4,
@@ -628,8 +690,22 @@ def run_ocular_battery(
     )
     print(f"[run] saved EOG done in {time.time() - t0:.0f}s", flush=True)
 
+    # ---- (d) the D14 dimension-matched control ------------------------------
+    dim_table, dim_diag = pd.DataFrame(), {}
+    if dim_matched_reps > 0:
+        print(f"[run] dimension-matched control, {dim_matched_reps} reps ...", flush=True)
+        t0 = time.time()
+        dim_table, dim_diag = dimension_matched_arms(
+            x_tr, y_tr, x_te, item_te, gallery, gallery_ids,
+            times_ms=times_ms, presaccadic_ms=presaccadic_ms, groups=gallery_groups,
+            subject_ids_test=subs_te, cfg=cfg, probe_factory=factory,
+            n_reps=dim_matched_reps, seed=seed,
+        )
+        print(f"[run] dimension-matched done in {time.time() - t0:.0f}s", flush=True)
+
     table = pd.concat(
-        [ocular["table"], ablation["table"], saved_table], ignore_index=True
+        [ocular["table"], ablation["table"], saved_table]
+        + ([dim_table] if len(dim_table) else []), ignore_index=True
     ).drop_duplicates(
         # ``variant`` is part of the key: without it the de-dup would keep one
         # scorer per arm and throw the other away.
@@ -659,7 +735,8 @@ def run_ocular_battery(
         )
     scores = scores_by_variant[primary_variant]
     chance = chance_by_variant[primary_variant]
-    diagnostics = {**ocular["diagnostics"], **ablation["diagnostics"], **saved_diag}
+    diagnostics = {**ocular["diagnostics"], **ablation["diagnostics"], **saved_diag,
+                   **dim_diag}
 
     pos = []
     if positive_control:
@@ -1151,6 +1228,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--window", default=DEFAULT_WINDOW, help="w0600 or wm100_800")
     p.add_argument("--emb", default="siglip2-base", help="video embedding bank tag")
     p.add_argument("--presaccadic-ms", type=float, default=150.0)
+    p.add_argument("--dim-matched-reps", type=int, default=0,
+                   help="draws of the D14 dimension-matched control: EEG through 2 "
+                        "random orthonormal spatial filters, the same shape as the "
+                        "HEOG/VEOG surrogate. 0 disables. Without it, 'EEG beats the "
+                        "surrogate' compares 64 x n_bins ridge features against "
+                        "2 x n_bins and is confounded with feature count.")
     p.add_argument("--n-time-bins", type=int, default=20)
     p.add_argument("--pseudo-k", type=int, default=4)
     p.add_argument("--n-pseudo-resamples", type=int, default=10)
@@ -1217,6 +1300,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         n_video_folds=args.n_video_folds,
         seed=args.seed,
         presaccadic_ms=args.presaccadic_ms,
+        dim_matched_reps=args.dim_matched_reps,
         n_time_bins=args.n_time_bins,
         n_pseudo_resamples=args.n_pseudo_resamples,
         pseudo_k=args.pseudo_k,
