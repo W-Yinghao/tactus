@@ -350,7 +350,8 @@ def primary_permutation(
 
 
 def primary_ceiling(emb_paths: Sequence[Path], *, k: int = 4, seed: int = 0,
-                    n_resamples: int = 20) -> pd.DataFrame:
+                    n_resamples: int = 20,
+                    n_gallery_subjects: Optional[int] = 10) -> pd.DataFrame:
     """Split-half EEG->EEG ceiling in the endpoint's units, pooled over folds."""
     frames = []
     for p in emb_paths:
@@ -360,6 +361,12 @@ def primary_ceiling(emb_paths: Sequence[Path], *, k: int = 4, seed: int = 0,
                 d["z_eeg"], d["video_id"], d["subject_id"], k=k,
                 n_resamples=n_resamples, gallery_sizes=(2, 10, 18), seed=seed,
                 per_subject=True,
+                # One common denominator across regimes (DECISIONS D15): a
+                # within_subject fold has 80 test subjects and a double_disjoint
+                # fold has 10, and the pooled gallery is cleaner the more
+                # subjects it averages, so an unpinned ceiling is a property of
+                # the fold design rather than of the data.
+                n_gallery_subjects=n_gallery_subjects,
             )
         except Exception as exc:  # keep the report honest rather than crashing
             print(f"[ceiling] {p.parent.name}: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -381,6 +388,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--skip-permutation", action="store_true")
     ap.add_argument("--skip-ceiling", action="store_true")
+    ap.add_argument("--ceiling-subjects", type=int, default=10,
+                    help="subjects averaged into the split-half gallery. Pinned so the "
+                         "denominator is identical across regimes (D15); 10 is the "
+                         "double-disjoint fold size, the largest value both regimes have.")
     args = ap.parse_args(argv)
 
     names = [s.strip() for s in args.runs.split(",")] if args.runs else None
@@ -425,7 +436,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         emb = sorted(p for p in emb if p.exists())
         if emb:
             print(f"[report] split-half noise ceiling over {len(emb)} fold(s) ...")
-            ceiling = primary_ceiling(emb, k=args.pseudo_k, seed=args.seed)
+            ceiling = primary_ceiling(emb, k=args.pseudo_k, seed=args.seed,
+                                      n_gallery_subjects=args.ceiling_subjects)
             if ceiling is not None and len(ceiling):
                 obs = primary["primary"].mean() if len(primary) else np.nan
                 # retrieval_noise_ceiling returns long form:

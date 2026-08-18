@@ -373,6 +373,7 @@ def retrieval_noise_ceiling(
     item_group_ids: Optional[ArrayLike] = None,
     seed: int = 0,
     per_subject: bool = True,
+    n_gallery_subjects: Optional[int] = None,
 ) -> pd.DataFrame:
     """EEG->EEG split-half retrieval: a ceiling *in the endpoint's own units*.
 
@@ -406,7 +407,25 @@ def retrieval_noise_ceiling(
     items = np.asarray(to_numpy(item_ids)).ravel()
     subs = np.asarray(to_numpy(subject_ids)).ravel()
 
-    subject_sets: List[Tuple[Any, np.ndarray]] = [("pooled", np.arange(items.shape[0]))]
+    # The "pooled" gallery averages each item over EVERY subject in the input, so
+    # its cleanliness -- and therefore the ceiling -- scales with how many
+    # subjects the caller happened to pass.  Measured on one within_subject fold:
+    # 10/20/40/80 subjects give 0.1133/0.1317/0.1497/0.1633.  A within_subject
+    # fold carries 80 test subjects and a double_disjoint fold carries 10, so
+    # comparing "fraction of ceiling" across those two regimes compares two
+    # different denominators and is meaningless (DECISIONS D15).
+    #
+    # ``n_gallery_subjects`` pins the count so one common denominator can be used
+    # everywhere.  The per-subject rows are unaffected: they never pool.
+    pool_idx = np.arange(items.shape[0])
+    if n_gallery_subjects is not None:
+        uniq_subs = np.unique(subs)
+        if uniq_subs.size > int(n_gallery_subjects):
+            keep = np.random.default_rng(seed).choice(
+                uniq_subs, size=int(n_gallery_subjects), replace=False
+            )
+            pool_idx = np.flatnonzero(np.isin(subs, keep))
+    subject_sets: List[Tuple[Any, np.ndarray]] = [("pooled", pool_idx)]
     if per_subject:
         subject_sets += [(s, np.flatnonzero(subs == s)) for s in np.unique(subs)]
 
