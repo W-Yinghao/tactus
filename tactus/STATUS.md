@@ -365,7 +365,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
 | D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
 | D13 | **done** | covariate table assembled; two of the four Q3 outcomes are far weaker than n=80 implies, and one specified covariate does not exist | `results/covariates/COVARIATES.md`, `tactus/eval/covariates.py` |
-| D14 | **control built, running** | dimension-matched arm implemented (EEG through 2 random orthonormal spatial filters, the surrogate's exact shape); w0600 x 20 subjects x heldout gallery in flight | `tactus/eval/run_ocular.py --dim-matched-reps` |
+| D14 | **answered, G6b still not declared** | blocker 1 cleared decisively; blocker 2 resolved into a null -- the pre-saccadic window carries no signal in any arm, so criterion 3 is unavailable | `results/ocular_d14/` |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
 | D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
@@ -440,6 +440,48 @@ is mostly one large tie and the honest version is a 33-vs-47 comparison. MTS
 splits 17/63. Both are small two-group tests wearing an n = 80 label. This is
 printed above the table in the generated report rather than discovered
 afterwards: a null on either is a statement about the design.
+
+## D14 -- the ocular evidence chain, and the criterion that cannot be met
+
+Rerun on w0600, 20 subjects, fold 0, held-out 18-video gallery, intercept-free
+scorer. Chance 0.0556.
+
+| arm | 0-595 ms | z (single trial) |
+|---|---|---|
+| ocular_ablated (D6 list, 8 frontal channels removed) | **0.0956** | 10.63 |
+| full_eeg | 0.0878 | 8.57 |
+| eog_surrogate_saved | 0.0622 | 2.40 |
+| ocular_surrogate | 0.0611 | 1.81 |
+| **eeg_rand2** -- dimension-matched, 60 draws | **0.0636 +- 0.0065**, p95 0.0753 | -- |
+
+**Blocker 1 is cleared, and in both directions.** The EOG surrogate lands inside
+the distribution of EEG through two *random* orthonormal spatial filters -- below
+its mean, in fact. It is not a privileged ocular measurement; it is two
+dimensions of EEG, and unremarkable ones. Meanwhile full EEG at 0.0878 sits well
+above that distribution's 95th percentile of 0.0753, so the EEG arm's margin over
+the surrogate is not feature count. Those are the two halves of the confound that
+made "EEG beats the surrogate" unusable, and they separate cleanly.
+
+**The primary claim holds.** Removing the eight frontal channels does not cost
+anything -- 0.0956 ablated against 0.0878 full, a difference well inside the
+design's minimal detectable difference and pointing the wrong way for an ocular
+account. The retrieval signal is not carried by the channels an eye movement
+would dominate.
+
+**Blocker 2 resolved into a null, and it is the interesting part.** The
+pre-saccadic window is not a selector bug on w0600 -- `t < 150 ms` on a window
+starting at 0 ms is exactly 0-150 ms. Redone there, *every* arm sits at chance:
+full EEG 0.0589 (z = 0.51), ablated 0.0569 (z = 0.72), surrogate 0.0611
+(z = 1.60), and no arm separates from any other. The signal lives in the
+sustained window instead (full EEG 0.0897, z = 6.47 over 150-595 ms).
+
+So G6b's third criterion -- "the w0600 pre-saccadic window is significant" -- is
+not merely unmet, it is unavailable: there is nothing in that window to be
+significant. The timing argument ("the signal precedes any saccade") cannot be
+made from these data. **G6b stays undeclared**, now for a reason that will not
+change with more compute, and the ocular claim rests on the two arguments that do
+hold: ablation costs nothing, and the surrogate is not special once dimension is
+controlled.
 
 ## D17 -- the design lesson, as a section rather than a caveat
 
