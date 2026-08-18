@@ -1,0 +1,56 @@
+# FHMC — Factorized Hierarchical Multi-positive Contrastive (blueprint v3 flagship).
+#
+# Resolves the competing-invariances conflict architecturally: the trunk keeps
+# exact (condition-level) alignment so the pre-registered primary endpoint
+# (test/video/g18/top1_pseudo) is measured unchanged, while three factor heads
+# inside the loss module learn flip-invariant content, flip-equivariant
+# geometry, and affect semantics, with a cross-covariance disentangler.
+#
+# Batch mode MUST be video_x_subject: the content/geometry terms only see
+# multi-positive structure when duplicate videos/orientations co-occur in a
+# batch. Switching to distinct_video silently collapses content to plain
+# InfoNCE (changing batch.mode without changing the loss is the classic
+# silent bug — see MISSION.md §3).
+#
+# GATE (MISSION.md D10): geometry-head claims require the audit-A verdict
+# (sequence x orientation crosstab) and the ocular battery to pass first.
+#
+#   python -m tactus.train.run -c configs/factorized_fhmc.yaml
+
+base: default.yaml
+
+run:
+  name: factorized_fhmc
+  notes: >
+    Flagship factorized objective. Exact term lives in the trunk space
+    (primary endpoint unchanged); content/geometry/semantic heads live inside
+    the loss module (trainer already optimizes loss_fn.parameters()).
+    Factorization diagnostics: linear-probe table (content head should read
+    video/material high + orientation low; geometry head the reverse; both
+    heads subject-ID low) via tactus/eval/probes.py.
+
+loss:
+  name: factorized
+  dim: 256                 # must equal model.d_embed
+  d_content: 128
+  d_geometry: 32
+  d_semantic: 64
+  lambda_exact: 1.0
+  lambda_content: 1.0
+  lambda_geometry: 0.5
+  lambda_semantic: 0.25
+  lambda_disentangle: 0.1
+  ce_weight: 0.5
+  sigma: 1.0
+  temp_exact: 0.04
+  temp_content: 0.07
+  temp_geometry: 0.1
+  temp_semantic: 0.07
+  learnable_temperature: true
+
+train:
+  epochs: 60
+  batch:
+    size: 72
+    mode: video_x_subject     # 24 videos x 3 subjects: gives content/geometry
+    subjects_per_video: 3     # terms their in-batch multi-positive structure

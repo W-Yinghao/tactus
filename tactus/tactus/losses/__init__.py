@@ -54,6 +54,10 @@ from .base import (
 # will raise "unknown loss" for a file that exists on disk.
 from .clisa import CLISA
 from .composite import CompositeLoss
+# Flagship objective (BLUEPRINT_v3). Registration is an import side effect, so
+# without this line `loss.name: factorized` raises "unknown loss" and the arm
+# cannot run at all -- which is exactly why it had never been run (DECISIONS D20).
+from .factorized import FactorizedFHMC
 from .infonce import InfoNCE
 from .masked_infonce import MaskedInfoNCE
 from .protonce import ProtoNCE
@@ -95,6 +99,7 @@ __all__ = [
     "RankNContrast",
     "CLISA",
     "CompositeLoss",
+    "FactorizedFHMC",
     # smoke test
     "selftest",
 ]
@@ -147,7 +152,9 @@ def _build_for_selftest(name: str, dim: int):
         counts = torch.randint(0, 200, (90, 4), generator=gen).float()
         kwargs["target_matrix"] = SoftCLIP.from_rater_counts(counts)
         kwargs["row_weights"] = SoftCLIP.disagreement_weights(counts)
-    if name == "protonce":
+    if name in ("protonce", "factorized"):
+        # Both size internal parameters from the embedding width, so the battery
+        # has to hand it over; the rest take it from the batch.
         kwargs["dim"] = dim
     if name == "composite":
         kwargs["components"]["protonce"]["dim"] = dim
