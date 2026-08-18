@@ -20,15 +20,21 @@ scores. Chance = 5.56%.
 
 | Regime / arm | Folds | Primary | 95% CI | Perm p | z | Frac. of ceiling | Beyond material |
 |---|---|---|---|---|---|---|---|
-| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | 11.5 | 0.614 | 74.8% |
-| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 12.6 | 0.674 | 75.0% |
-| within_subject · EA+ridge (linear floor) | 5 | 10.09% | 9.69–10.48 | 0.001 | 10.3 | ≈0.57 | — |
+| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | 11.5 | 0.78 ± 0.09 | 74.8% |
+| within_subject · FHMC (flagship) | 5 | 10.88% | 10.36–11.41 | 0.0002 | 12.5 | 0.78 ± 0.09 | — |
+| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 12.6 | 0.84 ± 0.10 | 75.0% |
+| within_subject · EA+ridge (linear floor) | 5 | 9.89% | 9.47–10.29 | 0.001 | 10.3 | — | — |
 | **double_disjoint · NICE+ProtoNCE** | **40** | **10.45%** | 9.98–10.92 | **0.0002** | **12.6** | **0.835** | **76.9%** |
 
 The double-disjoint cell is the headline: 5 video folds × 8 subject folds, every subject held
-out exactly once per video fold. It sits only 1.5 points below the within-subject number while
-recovering a **larger** share of what the data can support — 83.5% of the split-half noise
-ceiling versus 67.4% — because the cross-subject ceiling is itself lower (0.125 vs 0.177).
+out exactly once per video fold. It sits only 1.5 points below the within-subject number and
+recovers **the same** share of what the data can support — 0.835 in both regimes.
+
+The ceiling column is a scale, not a discriminator, and it took three attempts to make it even
+that. Its denominator is quoted with the spread its own subject sampling implies (§10, D15);
+every band is about ±0.09, wider than any gap between the arms. The two earlier readings of this
+column — 0.674 vs 0.835, then 0.814 vs 0.835 — were both denominator artefacts. Quote raw
+accuracy and CI externally.
 
 Permutation inference uses the **source video** as the exchangeable unit, 5000 permutations;
 p is at the 1/5001 floor in every arm. The deliberately wrong trial-level null is reported only
@@ -336,8 +342,7 @@ transformers 5.15). **Install order matters**: braindecode pulls torchaudio 2.11
 `libcudart.so.13` and dies on import against torch 2.6 — reinstall `torchaudio==2.6.0+cu124`
 immediately after. Recorded in `slurm/setup_env.sh`.
 
-Self-tests at time of writing: **72/72** loss scenarios, **33/33** model contract checks
-(**105/105** with `--all-registered`), **5/5** pytest. 63 modules, 37,168 lines.
+Self-tests: **80/80** loss scenarios (72/72 until the FHMC registration bug was found — see §10, D20), **105/105** model contract checks with `--all-registered`, **30 passed / 1 skipped** in `tests/`. 61 modules, 37236 lines.
 
 ---
 
