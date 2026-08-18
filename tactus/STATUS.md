@@ -385,18 +385,34 @@ The two "fraction of ceiling" figures being compared were therefore divided by
 different denominators, and most of the 16-point gap was fold design rather than
 model behaviour.
 
-With the gallery pinned at 10 subjects (`--ceiling-subjects`, the largest value
-both regimes can supply):
+Pinning the *count* at 10 (`--ceiling-subjects`) was the first fix and it was not
+enough. **Which** 10 subjects get drawn moves the pooled ceiling from 0.1122 to
+0.1539 across eight seeds on one fold -- sd 0.0143 on a mean of 0.1272, which is
+larger than the accuracy gaps being compared. Two arms drawing different subsets
+were being divided by denominators that differed by more than the effect.
 
-| regime | raw | common ceiling | fraction |
-|---|---|---|---|
-| within_subject | 11.93% | 0.1465 | 0.814 (was 0.674) |
-| double_disjoint | 10.45% | 0.1253 | 0.835 |
+The pooled ceiling is therefore averaged over 20 independent subject draws
+(`--ceiling-draws`) and carries its own spread. With that in place the three
+within_subject arms finally share a denominator, which they always should have --
+a split-half EEG-to-EEG ceiling has nothing to do with the model:
 
-The direction survives, the magnitude does not: the gap is ~2 points, not ~16.
-The denominators are still not strictly identical (different subject sets, different
-video sets), so **only the raw accuracy and its CI may be quoted externally** until
-a single n=80 subject-level ceiling exists.
+| arm | raw | ceiling | fraction | denominator +-1 sd |
+|---|---|---|---|---|
+| within_subject NICE+ProtoNCE | 11.93% | 0.1429 | 0.835 | [0.748, 0.945] |
+| within_subject NICE+InfoNCE | 10.99% | 0.1403 | 0.784 | [0.705, 0.882] |
+| within_subject FHMC | 10.88% | 0.1403 | 0.775 | [0.694, 0.879] |
+| double_disjoint NICE+ProtoNCE | 10.45% | 0.1253 | 0.835 | -- (no draw: a fold has exactly 10 subjects) |
+
+**The two regimes recover the same fraction, 0.835 and 0.835.** This quantity has
+now given three answers -- 0.674 vs 0.835, then 0.814 vs 0.835, now 0.835 vs
+0.835 -- and the first two were both properties of the denominator rather than of
+the models. The arms are not separable on it either: every band is about +-0.09
+wide, comfortably wider than the gaps between them.
+
+So the standing instruction is unchanged and now better justified: **quote raw
+accuracy and its CI externally.** Fraction-of-ceiling is a scale for "how much of
+what the data supports is being recovered", not a discriminator between arms or
+regimes.
 
 ## D13 -- the covariate set, and three things it turned up
 

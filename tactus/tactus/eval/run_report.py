@@ -351,7 +351,8 @@ def primary_permutation(
 
 def primary_ceiling(emb_paths: Sequence[Path], *, k: int = 4, seed: int = 0,
                     n_resamples: int = 20,
-                    n_gallery_subjects: Optional[int] = 10) -> pd.DataFrame:
+                    n_gallery_subjects: Optional[int] = 10,
+                    n_gallery_draws: int = 20) -> pd.DataFrame:
     """Split-half EEG->EEG ceiling in the endpoint's units, pooled over folds."""
     frames = []
     for p in emb_paths:
@@ -367,6 +368,7 @@ def primary_ceiling(emb_paths: Sequence[Path], *, k: int = 4, seed: int = 0,
                 # subjects it averages, so an unpinned ceiling is a property of
                 # the fold design rather than of the data.
                 n_gallery_subjects=n_gallery_subjects,
+                n_gallery_draws=n_gallery_draws,
             )
         except Exception as exc:  # keep the report honest rather than crashing
             print(f"[ceiling] {p.parent.name}: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -392,6 +394,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="subjects averaged into the split-half gallery. Pinned so the "
                          "denominator is identical across regimes (D15); 10 is the "
                          "double-disjoint fold size, the largest value both regimes have.")
+    ap.add_argument("--ceiling-draws", type=int, default=20,
+                    help="independent subject subsets averaged into the pooled "
+                         "ceiling. Pinning only the count is not enough: which 10 "
+                         "subjects are drawn moves the ceiling from 0.1122 to 0.1539 "
+                         "across eight seeds on one fold, more than the accuracy gaps "
+                         "being compared (DECISIONS D15).")
     args = ap.parse_args(argv)
 
     names = [s.strip() for s in args.runs.split(",")] if args.runs else None
@@ -437,7 +445,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if emb:
             print(f"[report] split-half noise ceiling over {len(emb)} fold(s) ...")
             ceiling = primary_ceiling(emb, k=args.pseudo_k, seed=args.seed,
-                                      n_gallery_subjects=args.ceiling_subjects)
+                                      n_gallery_subjects=args.ceiling_subjects,
+                                      n_gallery_draws=args.ceiling_draws)
             if ceiling is not None and len(ceiling):
                 obs = primary["primary"].mean() if len(primary) else np.nan
                 # retrieval_noise_ceiling returns long form:
@@ -447,10 +456,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                               & (ceiling["subject_id"].astype(str) == "pooled")]
                 if len(sub):
                     ceil_val = float(np.nanmean(sub["ceiling"].to_numpy(dtype=float)))
+                    # The denominator has its own sampling noise -- which subjects
+                    # land in the pooled gallery moves it by more than the gaps
+                    # between arms.  Quote the band, or the fraction reads as if
+                    # it were exact (DECISIONS D15).
+                    sd = float(np.nanmean(sub.get("ceiling_sd", pd.Series([np.nan]))
+                                          .to_numpy(dtype=float))) \
+                        if "ceiling_sd" in sub else float("nan")
+                    band = ""
+                    if np.isfinite(sd) and sd > 0 and ceil_val > 0:
+                        lo = fraction_of_ceiling(obs, ceil_val + sd)
+                        hi = fraction_of_ceiling(obs, max(ceil_val - sd, 1e-9))
+                        band = (f" Denominator +-1 sd moves this to "
+                                f"[{lo:.3f}, {hi:.3f}] (ceiling sd {sd:.4f} over "
+                                f"{int(sub.get('n_gallery_draws', pd.Series([0])).max())} "
+                                f"subject draws), so differences narrower than that "
+                                f"band are not resolvable.")
                     notes.append(
                         f"fraction-of-ceiling for {PRIMARY_KEY}: "
                         f"{fraction_of_ceiling(obs, ceil_val):.3f} "
-                        f"(observed {obs:.4f}, split-half ceiling {ceil_val:.4f}). "
+                        f"(observed {obs:.4f}, split-half ceiling {ceil_val:.4f}).{band} "
                         "The ceiling is reliability-matched, not a hard bound: the "
                         "video gallery is noiseless, so exceeding it is informative "
                         "rather than paradoxical."

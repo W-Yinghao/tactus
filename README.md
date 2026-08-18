@@ -17,20 +17,25 @@ Chance = 5.56%.
 
 | Regime / arm | Folds | Primary | 95% CI | Perm p | Frac. of ceiling |
 |---|---|---|---|---|---|
-| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | — |
-| within_subject · FHMC (flagship) | 5 | 10.88% | 10.36–11.41 | 0.0002 | — |
-| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 0.814 |
+| within_subject · NICE+InfoNCE | 5 | 10.99% | 10.51–11.47 | 0.0002 | 0.78 ± 0.09 |
+| within_subject · FHMC (flagship) | 5 | 10.88% | 10.36–11.41 | 0.0002 | 0.78 ± 0.09 |
+| within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 0.84 ± 0.10 |
 | within_subject · EA+ridge (linear floor) | 5 | 9.89% | 9.47–10.29 | 0.001 | — |
 | **double_disjoint · NICE+ProtoNCE** | **40** | **10.45%** | 9.98–10.92 | **0.0002** | **0.835** |
 
 The double-disjoint cell (5 video folds × 8 subject folds, every subject held out once per video
-fold) is the headline. It sits 1.5 points below the within-subject number while recovering a slightly **larger** share of
-what the data supports — 83.5% of the split-half noise ceiling versus 81.4%.
+fold) is the headline. It sits 1.5 points below the within-subject number and recovers **the same** share of what the data
+supports — 0.835 of the split-half noise ceiling in both regimes.
 
-Both ceiling fractions are computed against a gallery pinned at 10 subjects. Until that was pinned
-the two regimes were divided by different denominators and the gap read 16 points rather than 2; see
-`STATUS.md` §10 (D15), which also states why only the raw accuracies and CIs should leave this
-repository for now.
+That equality is the third answer this quantity has given, and the first two were denominator
+artefacts. Pooling every available subject into the split-half gallery made the two regimes' ceilings
+incomparable (83.5% vs 67.4%, because a within-subject fold carries 80 test subjects and a
+double-disjoint fold 10). Pinning the *count* at 10 was not enough either: **which** 10 subjects are
+drawn moves the ceiling from 0.1122 to 0.1539 across seeds, so the corrected 81.4% vs 83.5% was still
+mostly sampling noise. The pooled ceiling is now averaged over 20 subject draws and quoted with its
+own spread; at ±1 sd on the denominator each fraction spans roughly ±0.09, which is wider than any
+gap between the arms. Treat fraction-of-ceiling as a scale, not as a discriminator, and see
+`STATUS.md` §10 (D15) for why only raw accuracies and CIs should leave this repository.
 
 Permutation inference uses the **source video** as the exchangeable unit. The trial-level null is
 computed only to show it is 3.5–4.1× too narrow; it never supplies a reported p-value.

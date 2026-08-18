@@ -374,6 +374,7 @@ def retrieval_noise_ceiling(
     seed: int = 0,
     per_subject: bool = True,
     n_gallery_subjects: Optional[int] = None,
+    n_gallery_draws: int = 20,
 ) -> pd.DataFrame:
     """EEG->EEG split-half retrieval: a ceiling *in the endpoint's own units*.
 
@@ -417,15 +418,29 @@ def retrieval_noise_ceiling(
     #
     # ``n_gallery_subjects`` pins the count so one common denominator can be used
     # everywhere.  The per-subject rows are unaffected: they never pool.
-    pool_idx = np.arange(items.shape[0])
+    #
+    # Pinning the count is necessary but not sufficient, and this cost a wrong
+    # comparison before it was measured: *which* 10 subjects are drawn moves the
+    # pooled ceiling from 0.1122 to 0.1539 across eight seeds on one fold
+    # (sd 0.0143 on a mean of 0.1272).  Two arms drawing different subsets
+    # therefore get denominators differing by more than the accuracy gap being
+    # compared.  So the pooled ceiling is averaged over ``n_gallery_draws``
+    # independent subsets and its spread is carried alongside, and any
+    # fraction-of-ceiling comparison narrower than that spread is unresolvable.
+    pool_sets: List[np.ndarray] = [np.arange(items.shape[0])]
     if n_gallery_subjects is not None:
         uniq_subs = np.unique(subs)
         if uniq_subs.size > int(n_gallery_subjects):
-            keep = np.random.default_rng(seed).choice(
-                uniq_subs, size=int(n_gallery_subjects), replace=False
-            )
-            pool_idx = np.flatnonzero(np.isin(subs, keep))
-    subject_sets: List[Tuple[Any, np.ndarray]] = [("pooled", pool_idx)]
+            draw_rng = np.random.default_rng(seed)
+            pool_sets = []
+            for _ in range(max(1, int(n_gallery_draws))):
+                keep = draw_rng.choice(uniq_subs, size=int(n_gallery_subjects),
+                                       replace=False)
+                pool_sets.append(np.flatnonzero(np.isin(subs, keep)))
+    subject_sets: List[Tuple[Any, np.ndarray]] = [
+        (("pooled" if len(pool_sets) == 1 else f"pooled_draw{i:02d}"), idx)
+        for i, idx in enumerate(pool_sets)
+    ]
     if per_subject:
         subject_sets += [(s, np.flatnonzero(subs == s)) for s in np.unique(subs)]
 
@@ -491,7 +506,26 @@ def retrieval_noise_ceiling(
         return pd.DataFrame(columns=["subject_id", "endpoint", "ceiling",
                                      "n_resamples", "k_query", "k_gallery",
                                      "n_items"])
-    return pd.concat(frames, ignore_index=True)
+    out = pd.concat(frames, ignore_index=True)
+
+    # Collapse the per-draw pooled rows into one, carrying the spread.  Callers
+    # read the row labelled "pooled"; without this they would silently read
+    # draw 00 and inherit its sampling noise as if it were the ceiling.
+    draws = out[out["subject_id"].astype(str).str.startswith("pooled_draw")]
+    if len(draws):
+        agg = (draws.groupby("endpoint", as_index=False)
+                    .agg(ceiling=("ceiling", "mean"),
+                         ceiling_sd=("ceiling", "std"),
+                         ceiling_lo=("ceiling", "min"),
+                         ceiling_hi=("ceiling", "max"),
+                         n_resamples=("n_resamples", "sum"),
+                         k_query=("k_query", "first"),
+                         k_gallery=("k_gallery", "first"),
+                         n_items=("n_items", "first")))
+        agg.insert(0, "subject_id", "pooled")
+        agg["n_gallery_draws"] = int(draws["subject_id"].nunique())
+        out = pd.concat([agg, out[~out.index.isin(draws.index)]], ignore_index=True)
+    return out
 
 
 def noise_ceiling_table(
