@@ -364,7 +364,7 @@ own paragraphs below because they govern which numbers may leave this repository
 |---|---|---|---|
 | D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
 | D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
-| D13 | open | split-half ceiling is computed; the covariate set still has to be assembled | -- |
+| D13 | **done** | covariate table assembled; two of the four Q3 outcomes are far weaker than n=80 implies, and one specified covariate does not exist | `results/covariates/COVARIATES.md`, `tactus/eval/covariates.py` |
 | D14 | open | needs the `w0600` pre-saccadic redo and the dimension-matched control | -- |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
@@ -397,6 +397,49 @@ The direction survives, the magnitude does not: the gap is ~2 points, not ~16.
 The denominators are still not strictly identical (different subject sets, different
 video sets), so **only the raw accuracy and its CI may be quoted externally** until
 a single n=80 subject-level ceiling exists.
+
+## D13 -- the covariate set, and three things it turned up
+
+`tactus/eval/covariates.py` assembles the whole v2 section-7 set from artefacts
+that already exist, so Q3 cannot quietly use a different set than it reports.
+The ordering the decision fixed is in the code: primary SNR covariate is
+per-subject split-half reliability, secondary is the repaired scale-invariant
+ISC ratio, and the pre-repair ISC column is **not exported at all** -- voiding a
+column that correlated rho = 0.19 with reliability means removing it, not
+annotating it.
+
+Assembling it surfaced three things worth knowing before Q3 runs.
+
+**The behavioural covariate is not what the plan called it.** There is no
+per-target hit rate in this dataset. `rt`/`resp` are populated on exactly 32 rows
+per subject, none of them target rows, and they sit 3 to 56 events away from the
+nearest target. The task is to *count* the targets within each of the 32
+sequences and report the count at the end; `cresp` is the true count and `resp`
+the reported one. The attention measure is therefore per-sequence counting
+accuracy, and it is usable -- mean 0.812, sd 0.190, range 0.06-1.00, only 9 of 80
+at ceiling.
+
+**One specified covariate does not exist.** `n_trials_kept` is 2880 for every one
+of the 80 subjects and `n_trials_dropped` is 0 for every one. Our pipeline
+rejects no trials at all; artefact handling is scaling and clamping, not
+rejection. "Retained trial count" has zero variance and is dropped, with
+`frac_abs_gt_20` and `abs_max_after_scaling` carrying the artefact axis instead.
+
+**Two of the four Q3 outcomes are much weaker than n = 80 suggests.**
+
+| outcome | test | n effective | MDD |
+|---|---|---|---|
+| EQ_score | Spearman | 80 | r = 0.31 |
+| IRI_score | Spearman | 80 | r = 0.31 |
+| VT_score, as continuous | Spearman | 80 | r = 0.31 (optimistic) |
+| VT_score, binarised > 0 | two-sample | 33 | d = 0.64 |
+| MTS | two-sample | 17 | d = 0.77 |
+
+VT_score is exactly 0 for 47 of 80 subjects, so the rank test over its full range
+is mostly one large tie and the honest version is a 33-vs-47 comparison. MTS
+splits 17/63. Both are small two-group tests wearing an n = 80 label. This is
+printed above the table in the generated report rather than discovered
+afterwards: a null on either is a statement about the design.
 
 ## D17 -- the design lesson, as a section rather than a caveat
 
