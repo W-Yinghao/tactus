@@ -43,11 +43,12 @@ Every retrieval block is emitted twice:
     Protocol-identical -- cosine against the full ridge prediction, the same
     scorer the deep model is graded with.
 ``{tag}/video_nomean/*``
-    The same scorer after removing the fitted training-mean embedding.  That
-    term is a constant shared by every query, so it contributes a
+    The same scorer after removing the fitted training-mean embedding from the
+    query.  That term is a constant shared by every query, so it contributes a
     query-independent bias to each gallery item's score; the SigLIP gallery is
     anisotropic enough (mean pairwise cosine 0.88) that it swamps the
-    EEG-dependent term and pins the headline number to chance.  Neither is
+    EEG-dependent term, and the uncentred variant sits at chance because of it
+    (0.0573 vs this one's 0.1010, 5 folds, pseudo-k4, 18-way).  Neither is
     silently preferred: report both and say which one the paper quotes.
 ``{tag}/video_centered/*``
     The convention that ships (DECISIONS D12): the training mean removed from
@@ -688,7 +689,11 @@ def run_fold(
                     out[f"{tag}/{suffix}/material_control_ratio"] = \
                         _surviving_fraction(float(ov), float(wi))
                 if capture is not None and unit == "video" and k == pseudo_k:
-                    capture[f"rank_{suffix}"] = _rank_matrix(z, gal).astype(np.float32)
+                    # gsel, not gal: the D12 variant scores against the centred
+                    # gallery, and capturing ranks against the uncentred one made
+                    # the CI and permutation describe a statistic 0.0034 away from
+                    # the headline.  The check at the end of _uncertainty caught it.
+                    capture[f"rank_{suffix}"] = _rank_matrix(z, gsel).astype(np.float32)
                     capture["true_idx"] = true_idx.astype(np.int32)
                     capture["subject_id"] = mte["subject_id"].to_numpy(np.int32)
                     capture["gallery_video_id"] = np.asarray(ids, np.int64)
@@ -1208,6 +1213,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         doc["headline"] = _headline_block(summary, headline_key)
         doc["attribute_shortcut_control"] = _shortcut_block(summary, pk)
         doc["decim_mode_audit"] = decim_mode_audit(out_root, tag, headline_key)
+        # Running folds in parallel (one process per --folds value, as the slurm
+        # pool does) makes every process write this file from only the folds it
+        # ran, and the last writer wins.  Observed live: a summary reporting
+        # "HEADLINE 0.1080" from a single fold while all five fold JSONs sat on
+        # disk.  The number is not wrong, it just is not the number it appears
+        # to be, so say so instead of leaving it to whoever reads n_folds.
+        on_disk = sorted((out_root / "folds").glob("fold*.json")) \
+            if (out_root / "folds").is_dir() else []
+        doc["n_folds_aggregated"] = len(rows)
+        doc["n_fold_files_on_disk"] = len(on_disk)
+        doc["is_partial_aggregate"] = bool(len(on_disk) > len(rows))
+        if doc["is_partial_aggregate"]:
+            log.warning(
+                "PARTIAL AGGREGATE: this summary covers %d fold(s) but %d fold "
+                "file(s) exist under %s. Re-run without --force and without "
+                "--folds to aggregate all of them; do not quote the headline "
+                "below until you have.", len(rows), len(on_disk), out_root / "folds")
         doc["known_inconsistencies"] = []
         doc["resolved_inconsistencies"] = [
             {

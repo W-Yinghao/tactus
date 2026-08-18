@@ -53,13 +53,20 @@ Design notes that matter for correctness
       A ridge that predicts into condition-embedding space and a gallery of
       base-video embeddings do not share an origin, so they do not share a
       centre (``y_center`` vs ``base_center``).
-    * Centring only the query is not a milder version of this -- it is a
-      different and worse estimator.  Cosine against an uncentred, anisotropic
-      gallery (mean pairwise cosine 0.88 on the SigLIP2 embeddings here) is
-      dominated by a query-independent bias term; removing the mean from one
-      side alone leaves that bias in place while stripping the signal that
-      partially cancelled it, which is what pinned linear_align's headline to
-      chance.
+    * What actually matters is centring *at all*.  The SigLIP2 gallery has a
+      mean pairwise cosine of 0.88, so an uncentred score is dominated by a
+      query-independent bias term.  Measured on linear_align, within_subject,
+      5 folds, pseudo-k4, 18-way top-1 (chance 0.0556):
+
+          uncentred                 0.0573    <- at chance
+          query only                0.1010
+          query and gallery (D12)   0.0989
+
+      The choice between the last two is worth 0.002 against a subject
+      bootstrap CI of width 0.008, i.e. nothing.  D12 picked query-and-gallery
+      on the principle above -- training-only statistics, clean propagation to
+      the held-out side -- and not because it scores better, which it does not.
+      Do not cite this convention as a source of accuracy.
 """
 
 from __future__ import annotations
