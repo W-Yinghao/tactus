@@ -470,12 +470,17 @@ def run_fold(
     # Per-SUBJECT energy normalisation (DECISIONS D11).  feature_scale is a
     # per-FEATURE operation, and that turns out not to be enough: with
     # `--standardize robust` on the interpolated data one subject still carried
-    # 33.6-63.3% of the objective across the five within_subject folds, because a
-    # robust (IQR-based) scale under-reads a heavy-tailed subject and leaves its
-    # squared energy large after division.  Dividing each subject's training
-    # block by its own Frobenius norm makes the share uniform by construction
-    # for *any* feature scaling, which is what the decision actually asked for.
-    # Estimated on training columns only, like every other constant here.
+    # 19.7-28.3% of the objective across the five within_subject folds against a
+    # uniform share of 1/80, because a robust (IQR-based) scale under-reads a
+    # heavy-tailed subject and leaves its squared energy large after division.
+    # Dividing each subject's training block by its own Frobenius norm makes the
+    # share uniform by construction for *any* feature scaling, which is what the
+    # decision actually asked for.  Estimated on training columns only, like
+    # every other constant here.
+    #
+    # It buys a better fit and no retrieval: objective drop 0.122 -> 0.158, but
+    # video 18-way top-1 0.0760 -> 0.0741 (chance 0.0556).  A correctness fix,
+    # not a performance one -- do not quote it as the latter.
     if subject_energy_norm:
         fro = {s: float(np.linalg.norm(norm[s][:, trc])) for s in subjects_here}
         med_fro = float(np.median([v for v in fro.values() if v > 0]) or 1.0)
@@ -486,7 +491,7 @@ def run_fold(
     # point of running it after the block above rather than before.  Measured on
     # 80 subjects at w0600 --decim 2, per-feature scaling only: 93.2% for sub-17
     # under `none`, 65.4% under `robust`; after sub-17's PO4 was interpolated,
-    # `robust` still gave 33.6-63.3% across the five within_subject folds, which
+    # `robust` still gave 19.7-28.3% across the five within_subject folds, which
     # is what motivated the per-subject step.
     energy = {s: float(np.sum(norm[s][:, trc] ** 2)) for s in train_subjects}
     e_tot = sum(energy.values()) or 1.0
@@ -664,7 +669,7 @@ def build_parser() -> argparse.ArgumentParser:
                    action="store_false",
                    help="skip the per-SUBJECT Frobenius normalisation. Per-feature "
                         "scaling alone is not sufficient: under 'robust' one "
-                        "subject still carried 34-63%% of the objective across the "
+                        "subject still carried 20-28%% of the objective across the "
                         "five within_subject folds (DECISIONS D11).")
     p.add_argument("--enroll-fracs", default="1.0",
                    help="comma-separated fractions of training conditions used to "
