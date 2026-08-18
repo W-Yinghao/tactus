@@ -105,7 +105,43 @@ def fold_dirs(run: Path, regime: Optional[str]) -> List[Path]:
     if len(seen) > 1:
         print(f"[report] {run.name}: folds span {seen}; keeping regime={regime!r} "
               f"({len(out)} fold(s))", file=sys.stderr)
+    _warn_if_code_heterogeneous(run, out)
     return out
+
+
+def _warn_if_code_heterogeneous(run: Path, folds: Sequence[Path]) -> None:
+    """Say so when an "arm" was not trained by one version of the code.
+
+    Folds are trained over hours and a repository is edited in the meantime.
+    Observed here: the FHMC disentangler was changed from a cross-covariance to a
+    cross-correlation while a 40-fold grid was in flight, leaving three folds with
+    that term reading 1.2e-06 and the rest 4.1e-02 inside a single run directory.
+    Every artefact looked normal. Aggregating those folds averages two objectives
+    and calls the result one arm.
+
+    A warning rather than an error: mid-run edits that touch nothing relevant are
+    common, and only the reader knows which is which.
+    """
+    commits: Dict[str, List[str]] = {}
+    for fd in folds:
+        try:
+            m = json.loads((fd / "metrics.json").read_text())
+        except Exception:  # noqa: BLE001
+            continue
+        c = str(m.get("code_commit", "") or "unrecorded")
+        if m.get("code_dirty"):
+            c += "+dirty"
+        commits.setdefault(c, []).append(fd.name)
+    if len(commits) > 1:
+        detail = "; ".join(f"{c}: {len(v)} fold(s) ({', '.join(sorted(v)[:4])}"
+                           f"{'...' if len(v) > 4 else ''})"
+                           for c, v in sorted(commits.items()))
+        print(f"[report] WARNING {run.name}: folds span {len(commits)} code versions "
+              f"-- {detail}. Check that nothing affecting this arm changed between "
+              f"them before aggregating.", file=sys.stderr)
+    elif "unrecorded" in commits and len(folds) > 1:
+        print(f"[report] {run.name}: folds predate per-fold code fingerprints, so "
+              f"code homogeneity across them cannot be checked.", file=sys.stderr)
 
 
 def collect_retrieval(runs: Sequence[Path], regime: Optional[str] = None) -> pd.DataFrame:

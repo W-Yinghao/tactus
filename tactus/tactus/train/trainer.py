@@ -55,6 +55,8 @@ scaler and RNG state) and idempotent (a fold with ``done.json`` is skipped).
 
 from __future__ import annotations
 
+import pathlib
+
 import contextlib
 import hashlib
 import importlib
@@ -1060,6 +1062,31 @@ def _to_container(cfg: Any) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _git_commit() -> str:
+    """Short commit of the tree this process is running from, or "" if unknown."""
+    import subprocess
+    try:
+        return subprocess.run(
+            ["git", "-C", str(pathlib.Path(__file__).resolve().parent), "rev-parse",
+             "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+    except Exception:  # noqa: BLE001  -- never let provenance break a training run
+        return ""
+
+
+def _git_dirty() -> bool:
+    """True when tracked files differ from the commit, so it does not pin the code."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(pathlib.Path(__file__).resolve().parent), "status",
+             "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=10, check=True).stdout
+        return bool(out.strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @dataclass
 class TrainResult:
     """Everything run.py needs to know about one finished fold."""
@@ -1095,6 +1122,15 @@ class TrainResult:
     transform_fit_median: float = 0.0   # trials/subject used to fit EA + scaler
     test_uid_sha1: str = ""             # identical across the whole curve, or the
     val_uid_sha1: str = ""              # curve is measuring two different things
+    #: Git commit and worktree state at the moment this fold ran.  Folds of one
+    #: arm that disagree here were not trained by the same code.  Live example:
+    #: the FHMC disentangler was changed from a cross-covariance to a
+    #: cross-correlation while a 40-fold double-disjoint grid was in flight, so
+    #: three folds carried a term reading 1.2e-06 and the rest 4.1e-02 -- a
+    #: 33,000x difference inside what was presented as one arm.  Nothing in the
+    #: outputs said so, which is why this field exists.
+    code_commit: str = ""
+    code_dirty: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1822,6 +1858,8 @@ class Trainer:
             transform_fit_median=float(self.transform_fit_stats["n_fit_median"]),
             test_uid_sha1=str(self.eval_fingerprint["test"]["order_sha1"]),
             val_uid_sha1=str(self.eval_fingerprint["val"]["order_sha1"]),
+            code_commit=_git_commit(),
+            code_dirty=_git_dirty(),
         )
         atomic_write_json(self.run_dir / "metrics.json", result.to_dict())
         atomic_write_json(
