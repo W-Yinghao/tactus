@@ -368,9 +368,9 @@ own paragraphs below because they govern which numbers may leave this repository
 | D14 | open | needs the `w0600` pre-saccadic redo and the dimension-matched control | -- |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
-| D17 | open | collinearity matrix written; the design-lesson section is not | -- |
+| D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
 | D18 | open | needs the `frame_emb (360, 15, D)` contract-C extension | -- |
-| D19 | open | companion-metric recomputation not started | -- |
+| D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, negative** | the flagship arm was unrunnable, then ran, then turned out to have an inoperative disentangler; see below | `results/probes_fhmc_ws/PROBES.md`, `results/report_fhmc_ws/REPORT.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
 | D22 | running | offline line done (D11/D12); training line is FHMC dd (40 folds) + the fixed arm | -- |
@@ -397,6 +397,77 @@ The direction survives, the magnitude does not: the gap is ~2 points, not ~16.
 The denominators are still not strictly identical (different subject sets, different
 video sets), so **only the raw accuracy and its CI may be quoted externally** until
 a single n=80 subject-level ceiling exists.
+
+## D17 -- the design lesson, as a section rather than a caveat
+
+`tactus/eval/design_lesson.py` regenerates the whole thing from the trial table,
+so the paper section and the enforcement list cannot drift apart. Four blocks:
+attribute collinearity, the affect axes, the material x touch_type occupancy
+table, and class imbalance.
+
+The claim it exists to license: on these 90 stimuli a hand touches skin and an
+object touches nearly everything else, so **"material decoding" and
+"hand-versus-object decoding" are two names for one claim** -- not two pieces of
+converging evidence. `UNANSWERABLE` stays hard-coded, so making that claim in
+future requires deleting a line rather than forgetting a caveat.
+
+Two things had to be handled to make the section honest rather than merely
+alarming. Cramer's V is reported both bias-corrected and uncorrected: the
+material x touch_type table is 61 of 96 cells empty, where the uncorrected
+statistic inflates, and the Phase-0 audit quoted the uncorrected values
+(toucher/material 1.000, object/material 0.993) which have to remain
+reconcilable rather than silently replaced by the corrected 0.965 and 0.867.
+And orientation is scored over the 360 conditions rather than the 90 videos --
+it is a property of the condition, so deduplicating on video_id sampled
+whichever orientation came first and reported a majority rate of 0.278 for a
+factor that is exactly balanced by construction.
+
+That last point is the section's punchline rather than a footnote. Orientation
+is the only attribute crossed with video by design, it is the only one whose
+`majority_over_uniform` is exactly 1.0, and it is the only one whose MVPA
+replicates. The others are sampled naturalistically -- `object` alone reaches
+8.4x -- which is what a majority-class predictor collects for free.
+
+## D19 -- the MVPA null is a metric difference, and the design says which one
+
+The decision asked whether material / toucher / touch_type are null because our
+metric differs from the companion paper's, or because the effect is not there.
+Both metrics had already been run under the companion's protocol
+(`--cv sequence`, per-class Ledoit-Wolf shrinkage), so the answer needed no new
+compute -- only reading the majority-rate column that was added after the first
+MVPA pass looked good.
+
+| target | uniform chance | majority rate | plain-accuracy peak | peak - majority | peak / uniform |
+|---|---|---|---|---|---|
+| material | 0.125 | 0.311 | 0.309 | **-0.002** | 2.47x |
+| toucher | 0.500 | 0.689 | 0.686 | **-0.003** | 1.37x |
+| touch_type | 0.083 | 0.356 | 0.342 | **-0.014** | 4.10x |
+| orientation | 0.250 | **0.250** | 0.298 | **+0.048** | 1.19x |
+
+Every disputed target sits *below* the accuracy of a decoder that always answers
+with the most common class, while looking like 1.4-4.1x decoding when scored
+against uniform chance. The one target that replicates is the one target whose
+classes are exactly balanced by construction -- 90 videos x 4 orientations -- so
+its uniform chance and its majority rate are the same number and the two ways of
+scoring cannot diverge.
+
+Under balanced accuracy the disputed targets collapse as expected: material 0.129
+against 0.125, touch_type 0.0835 against 0.083, toucher 0.502 against 0.500.
+Material's small residue peaks at 180-250 ms rather than the companion's
+110-120 ms, so it does not support the landmark either.
+
+**Verdict: metric difference.** Report both metrics, and quote the majority rate
+beside every accuracy on this dataset. This is a stimulus-set property -- skin is
+31% of the 90 videos and "touch" is 36% -- so it belongs with D17's design-lesson
+section rather than being filed as a decoding failure.
+
+**Boundary of this claim.** It is a statement about *our* pipeline: our own two
+metrics differ by exactly the majority rate. Confirming that the published
+numbers carry the same property needs the companion's paper, which is not in this
+repository; their exact trial handling, baseline correction and Bayesian
+statistics are not replicated here. The claim is that these targets are not
+decodable above their majority rate in our hands, not that the published result
+is wrong.
 
 ## D20 -- the flagship arm, and why it does not support contribution 2
 
