@@ -49,8 +49,15 @@ Every retrieval block is emitted twice:
     anisotropic enough (mean pairwise cosine 0.88) that it swamps the
     EEG-dependent term and pins the headline number to chance.  Neither is
     silently preferred: report both and say which one the paper quotes.
-    The paper quotes ``video_nomean`` -- that is :data:`PRIMARY_VARIANT`, and it
-    is the only variant the uncertainty stage calls "the headline".
+``{tag}/video_centered/*``
+    The convention that ships (DECISIONS D12): the training mean removed from
+    the query *and* the gallery.  Defined once in the module docstring of
+    :mod:`tactus.eval.retrieval` ("centring convention"); see there for why
+    centring one side alone is a different estimator rather than a milder one.
+    The paper quotes this -- it is :data:`PRIMARY_VARIANT`, and it is the only
+    variant the uncertainty stage calls "the headline".  ``video`` and
+    ``video_nomean`` stay in the output as the before/after the decision asked
+    for, not as alternatives anyone may quote.
 
 Uncertainty on the headline
 ---------------------------
@@ -143,7 +150,9 @@ log = logging.getLogger(__name__)
 #: docstring): cosine after removing the fitted training-mean embedding from the
 #: query.  The uncertainty stage is computed for both variants; only this one is
 #: labelled "headline".
-PRIMARY_VARIANT = "video_nomean"
+#: DECISIONS D12.  Was ``video_nomean`` (query centred, gallery not),
+#: which is the mismatched convention that pinned the headline to chance.
+PRIMARY_VARIANT = "video_centered"
 
 #: Gallery size of the pre-registered primary endpoint (18-way top-1).
 PRIMARY_NWAY = 18
@@ -574,6 +583,16 @@ def run_fold(
             "retrieval number below would be leakage."
         )
 
+    # --- D12 centring constants, from the training split only ---------------
+    # Trial-weighted so this matches the ridge's own y_mean_ under the pooled
+    # model; under per_subject_model the per-subject means differ only by trial
+    # counts, and one fold-level centre keeps query and gallery on the same
+    # origin (a per-subject gallery centre is not expressible in one array).
+    y_center = video.cond_emb[tr["condition_id"].to_numpy(np.int64)].mean(
+        axis=0, keepdims=True)
+    base_center = video.base_emb[
+        np.unique(tr["video_id"].to_numpy(np.int64)) - 1].mean(axis=0, keepdims=True)
+
     # The training design does not depend on the pseudo-trial factor k, so the
     # (expensive) featurize + eigendecomposition is done once per model scope and
     # reused for every k instead of being redone per k.
@@ -640,9 +659,19 @@ def run_fold(
         #                    quietly preferred.  See ``RidgeAlpha.predict``.
         for unit in units:
             gal, true_idx, groups, ids = _gallery_for(mte, video, unit)
-            for suffix, z in ((unit, pred), (f"{unit}_nomean", pred_nc)):
+            # DECISIONS D12 picked SRM's convention: the training mean comes off
+            # the query AND the gallery.  It is defined once, in the module
+            # docstring of tactus.eval.retrieval; every arm points there.  Each
+            # side is centred by the training mean *of its own space*, which is
+            # why the video-unit gallery uses base_center and not y_center -- the
+            # ridge predicts into condition-embedding space, the 18-way gallery
+            # lives in base-video space, and one mean cannot serve both.
+            gal_c = gal - (base_center if unit == "video" else y_center)
+            for suffix, z, gsel in ((unit, pred, gal),
+                                    (f"{unit}_nomean", pred_nc, gal),
+                                    (f"{unit}_centered", pred - y_center, gal_c)):
                 m = retrieval_np(
-                    z, gal, true_idx, groups=groups, gallery_sizes=gallery_sizes,
+                    z, gsel, true_idx, groups=groups, gallery_sizes=gallery_sizes,
                     seed=seed, subject_id=mte["subject_id"].to_numpy(),
                     include_cross_group=include_cross_group,
                 )
@@ -1179,22 +1208,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         doc["headline"] = _headline_block(summary, headline_key)
         doc["attribute_shortcut_control"] = _shortcut_block(summary, pk)
         doc["decim_mode_audit"] = decim_mode_audit(out_root, tag, headline_key)
-        doc["known_inconsistencies"] = [
+        doc["known_inconsistencies"] = []
+        doc["resolved_inconsistencies"] = [
             {
                 "id": "centring_convention_vs_srm",
                 "where": "tactus/baselines/srm.py vs tactus/baselines/linear_align.py",
-                "what": ("srm.py subtracts the training mean embedding from the "
+                "what": ("srm.py subtracted the training mean embedding from the "
                          "prediction AND the gallery (y_center for the condition "
                          "gallery, base_center for the 18-way base-video gallery); "
-                         "linear_align subtracts the ridge's y_mean_ from the query "
-                         "only and leaves the gallery untouched."),
-                "why_it_matters": ("both are quoted against the same 18-way endpoint, "
-                                   "and the two conventions are not a relabelling: "
-                                   "centring the gallery changes which directions the "
-                                   "cosine can separate on a gallery whose mean "
-                                   "pairwise cosine is 0.88"),
-                "status": "NOT fixed here (srm.py is not this module's file); "
-                          "needs a human decision on one convention",
+                         "linear_align subtracted the ridge's y_mean_ from the query "
+                         "only and left the gallery untouched."),
+                "resolution": ("DECISIONS D12 adopted srm.py's convention everywhere. "
+                               "linear_align now emits {unit}_centered and quotes it "
+                               "as PRIMARY_VARIANT; the convention is defined once in "
+                               "the module docstring of tactus.eval.retrieval."),
+                "before_after": ("the superseded variants stay in this file's output "
+                                 "as video (no centring) and video_nomean (query only) "
+                                 "so the effect of the decision is auditable, not "
+                                 "asserted"),
+                "status": "fixed",
             },
         ]
         if not args.skip_stats:

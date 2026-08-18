@@ -33,6 +33,33 @@ Design notes that matter for correctness
     ``vid2eeg`` (query = video embedding, gallery = one EEG representation per
     candidate item).  The second direction is the one that is sensitive to a
     collapsed / hubness-dominated EEG embedding space, so both are reported.
+
+.. _centring-convention:
+
+5.  **Centring convention (canonical definition -- DECISIONS D12).**
+    *The training-set mean is subtracted from the query and from the gallery,
+    and from nothing else.*  Every arm that quotes a retrieval number obeys
+    this: :mod:`tactus.baselines.srm`, :mod:`tactus.baselines.linear_align`
+    (``{unit}_centered``, its :data:`~tactus.baselines.linear_align.PRIMARY_VARIANT`)
+    and the deep-model evaluation in :mod:`tactus.train.trainer`.  Cite this
+    paragraph rather than restating it.
+
+    Three properties are load-bearing:
+
+    * The mean is a **training** statistic, so nothing about the held-out side
+      leaks into its own scoring -- this is why SRM's convention won over
+      linear_align's original one rather than the reverse.
+    * Query and gallery are centred by the training mean **of their own space**.
+      A ridge that predicts into condition-embedding space and a gallery of
+      base-video embeddings do not share an origin, so they do not share a
+      centre (``y_center`` vs ``base_center``).
+    * Centring only the query is not a milder version of this -- it is a
+      different and worse estimator.  Cosine against an uncentred, anisotropic
+      gallery (mean pairwise cosine 0.88 on the SigLIP2 embeddings here) is
+      dominated by a query-independent bias term; removing the mean from one
+      side alone leaves that bias in place while stripping the signal that
+      partially cancelled it, which is what pinned linear_align's headline to
+      chance.
 """
 
 from __future__ import annotations
