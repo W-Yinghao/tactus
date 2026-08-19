@@ -92,12 +92,18 @@ def parse_tasks(spec: str) -> list[int]:
 
 
 def free_slots(gpus_per_worker: int = 0) -> int:
-    """How many workers we may still usefully submit.
+    """How many workers we may still submit.
 
-    Bounded by BOTH quotas: the job-count cap and, for GPU pools, the
-    concurrent-GPU cap.  Returning the min keeps the queue honest -- submitting
-    more GPU workers than :data:`QOS_MAX_GPUS` does not make anything run
-    sooner, it just buries the queue.
+    Bounded by the **submit** cap only.  ``QOSMaxGRESPerUser`` limits how many
+    GPUs may *run* at once; it does not stop a job from sitting PENDING, and a
+    pending worker starts the instant a GPU frees.  This function used to return
+    ``min(by_jobs, by_gpus)``, which clamped a submission to what could run right
+    then: with the GPU quota momentarily full, a request for five workers became
+    one, and the pool then crawled until someone noticed and resubmitted by hand.
+    Queue depth is the point of a worker pool.
+
+    ``by_gpus`` is still computed and returned to callers that want to report it,
+    but it no longer limits the submission.
     """
     user = os.environ.get("USER", "")
     used_jobs, used_gpus = 0, 0
@@ -119,8 +125,9 @@ def free_slots(gpus_per_worker: int = 0) -> int:
                 used_gpus += int(line.rsplit(":", 1)[-1]) if line.rsplit(":", 1)[-1].isdigit() else 1
     except Exception:
         pass
-    by_gpus = (QOS_MAX_GPUS - used_gpus) // max(1, gpus_per_worker)
-    return max(1, min(by_jobs, by_gpus))
+    # Reported by the caller, not enforced: see the docstring.
+    globals()["_LAST_GPU_HEADROOM"] = (QOS_MAX_GPUS - used_gpus) // max(1, gpus_per_worker)
+    return max(1, by_jobs)
 
 
 class PoolDirs:
@@ -337,10 +344,30 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
     budget = free_slots(gpus_per_worker=int(args.gpus or 0))
     workers = max(1, min(args.workers, len(pending), budget))
-    if workers < args.workers:
-        print(f"[pool:{args.name}] {args.workers} workers requested, {workers} submitted "
-              f"(QOS budget {budget}, pending {len(pending)}"
-              + (f", GPU cap {QOS_MAX_GPUS}" if args.gpus else "") + ")")
+    # Emitted again after the jobid line below, not only here: this is the one
+    # message a caller must not miss, and callers pipe this output through
+    # `tail`.  A submission that quietly became one worker instead of five looks
+    # identical in the jobid line, and the pool then takes five times as long for
+    # a reason nobody sees.
+    clamped = (
+        f"[pool:{args.name}] NOTE: {args.workers} workers requested, {workers} "
+        f"submitted -- bound by "
+        + ("the {} pending task(s)".format(len(pending))
+           if len(pending) <= budget else
+           "the {}-job submit cap ({} already queued)".format(
+               QOS_MAX_SUBMIT, QOS_MAX_SUBMIT - SLOT_RESERVE - budget))
+        + "."
+        if workers < args.workers else ""
+    )
+    if args.gpus:
+        head = globals().get("_LAST_GPU_HEADROOM", None)
+        if head is not None and head < workers:
+            print(f"[pool:{args.name}] {workers} worker(s) submitted, {max(head, 0)} "
+                  f"GPU slot(s) free right now -- the rest will sit PENDING and start "
+                  f"as GPUs free. That is intended: the {QOS_MAX_GPUS}-GPU quota caps "
+                  f"what runs, not what may be queued.")
+    if clamped:
+        print(clamped)
 
     logdir = Path(args.log_root) / args.name
     logdir.mkdir(parents=True, exist_ok=True)
@@ -366,6 +393,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
     print(f"           script={path}")
     if args.dry_run:
         print(f"           would run: sbatch {path}")
+        if clamped:
+            print(clamped)
         return 0
 
     cmd = ["sbatch", "--parsable"]
@@ -378,6 +407,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
         return 1
     jid = r.stdout.strip().split(";")[0]
     print(f"           submitted jobid={jid}  logs={logdir}")
+    if clamped:
+        print(clamped)
     return 0
 
 

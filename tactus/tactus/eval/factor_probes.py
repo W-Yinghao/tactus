@@ -188,6 +188,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--regime", default=None)
     ap.add_argument("--trials", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--folds", default=None,
+                    help="comma-separated fold directory names to keep, e.g. "
+                         "'vf00,vf01,vf02,vf03'. Use it to exclude the sealed "
+                         "confirmation fold when probing for model selection "
+                         "(DECISIONS D16), and to compare two arms over the same "
+                         "folds when one has run fewer of them.")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
 
@@ -198,6 +204,14 @@ def main(argv: Optional[List[str]] = None) -> int:
               [["condition_id", "orientation", "material", "touch_type", "toucher"]]
               .reset_index(drop=True))
     folds = fold_dirs(a.run_dir, a.regime)
+    if a.folds:
+        keep = {x.strip() for x in a.folds.split(",") if x.strip()}
+        missing = keep - {f.name for f in folds}
+        if missing:
+            print(f"[probes] requested fold(s) not present: {sorted(missing)}",
+                  file=sys.stderr)
+            return 1
+        folds = [f for f in folds if f.name in keep]
     if not folds:
         print(f"[probes] no folds for regime={a.regime!r} under {a.run_dir}", file=sys.stderr)
         return 1
