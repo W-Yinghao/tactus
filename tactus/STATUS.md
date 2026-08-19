@@ -1,7 +1,8 @@
-# TACTUS STATUS  (updated 2026-08-18T16:20Z)
+# TACTUS STATUS  (updated 2026-08-19T08:15Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
-## Gates: **G0 G1 G2 G3 G4 G5 G6a** passed. **G6b (ocular) deliberately not declared** — see §6.
+## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
+## blockers cleared — see §6 and §10 (D14). The arXiv placeholder it gates is not triggered.
 
 > Canonical status document required by `MISSION.md` §0. Every number below is traceable to a
 > named file under `/projects/EEG-foundation-model/tactus_work/`.
@@ -254,13 +255,13 @@ beside every latency.
 - The `wm100_800` pre-saccadic selector is `t < 150 ms` on a window that begins at −100 ms, so it
   swallows the baseline.
 
-**Both blockers are now resolved and all three criteria are met — see §10 (D14) for the numbers.**
-Over 5 folds at 20 subjects: ablated 0.1068 vs full 0.1009 (ablation costs nothing); the EOG
-surrogate sits at the 3rd percentile of 100 random 2-filter EEG projections while full EEG sits at
-the 100th (so the margin is not feature count); and the pre-saccadic window carries EEG signal
-(+0.0103, p = 0.0069, 5/5 folds) that survives ablation while both surrogates sit at or below chance
-there. G6b is declarable at n = 5 folds over a fixed pool of 20 subjects; repeat at 80 before it
-carries a paper. The arXiv placeholder G6 gates is deliberately **not** triggered here.
+**G6b is declared — see §10 (D14) for the numbers, measured at 80 subjects.**
+Over 5 folds at 80 subjects: ablated 0.1040 vs full 0.1037 (ablation costs nothing, and the small
+gain seen at 20 subjects was sampling noise); the EOG surrogate sits at the 5th percentile of 100
+random 2-filter EEG projections while full EEG sits at the 100th, so the margin is not feature
+count; and the pre-saccadic window carries EEG signal (+0.0125, p = 0.0011, 5/5 folds) that survives
+ablation while both surrogates sit at chance there. The arXiv placeholder G6 gates is deliberately
+**not** triggered here.
 
 ---
 
@@ -374,13 +375,13 @@ own paragraphs below because they govern which numbers may leave this repository
 | D11 | **done** | sub-17's PO4 interpolated (spherical spline, *before* the average reference); the structural half needed a second fix -- per-feature scaling left one subject owning 20-28% of the SRM objective, so SRM now normalises per subject too | `results/baselines/corrca/w0600{,_pre_D11}`, `results/baselines/srm/w0600_ws_{subjnorm,nosubjnorm}` |
 | D12 | **done** | centring unified on "training mean off query *and* gallery", defined once in `tactus/eval/retrieval.py`; linear_align reruns to 0.0989 [0.0947, 0.1029] | `results/baselines/linear_align/within_subject_w0600_siglip2-base_ea1_d4p/summary.json` |
 | D13 | **done** | covariate table assembled; two of the four Q3 outcomes are far weaker than n=80 implies, and one specified covariate does not exist | `results/covariates/COVARIATES.md`, `tactus/eval/covariates.py` |
-| D14 | **all three criteria met over 5 folds** | surrogate sits at the 3rd percentile of random 2-filter EEG; pre-saccadic p=0.0069 and survives ablation. Supersedes the single-fold null | `results/ocular_d14/` |
+| D14 | **G6b declared** | at 80 subjects: ablated = full (0.1040/0.1037), surrogate at the 5th percentile of random 2-filter EEG, pre-saccadic p=0.0011 and survives ablation | `results/ocular_d14_s80/` |
 | D15 | **answered** | the ceiling was fold-design-dependent; see below | `results/report_*/REPORT.md` |
 | D16 | **in force** | video fold 4 (the fifth) is the sealed confirmation fold | -- |
 | D17 | **done** | design-lesson section generated as a reproducible module; the unanswerable list stays hard-coded | `results/design_lesson/DESIGN_LESSON.md`, `tactus/eval/design_lesson.py` |
 | D18 | **contract extended and sized** | `frame_emb (360, 15, 768)` built; the time axis is 14.4% of the video-side variance and diffuse | `derived/video_emb/siglip2-base-frames.npz` |
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
-| D20 | **done, negative** | the flagship arm was unrunnable, then ran, then turned out to have an inoperative disentangler; see below | `results/probes_fhmc_ws/PROBES.md`, `results/report_fhmc_ws/REPORT.md` |
+| D20 | **done, half-supported** | unrunnable, then ran (10.88%, below ProtoNCE), then its disentangler turned out inoperative; fixed, the geometry factor is demonstrated and the content factor is not, and neither moves the endpoint | `results/probes_fhmc_{ws_f0123,disent}/PROBES.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
 | D22 | running | offline line done (D11/D12); training line is FHMC dd (40 folds) + the fixed arm | -- |
 
@@ -466,58 +467,54 @@ splits 17/63. Both are small two-group tests wearing an n = 80 label. This is
 printed above the table in the generated report rather than discovered
 afterwards: a null on either is a statement about the design.
 
-## D14 -- the ocular evidence chain, now across five folds
+## D14 -- the ocular evidence chain, at 80 subjects
 
-w0600, 20 subjects, 5 video folds, held-out 18-video gallery, intercept-free
-scorer, chance 0.0556. Fold-level mean +- sd.
+w0600, 5 video folds, held-out 18-video gallery, intercept-free scorer, chance
+0.0556. Fold-level mean +- sd over the 5 folds; the 20-subject run is kept beside
+it because the caveat attached to that one is what this run discharges.
 
 | arm | 0-595 ms | 0-150 ms (pre-saccadic) | 150-595 ms |
 |---|---|---|---|
-| ocular_ablated (D6 list, 8 frontal channels removed) | **0.1068 +- 0.0070** | 0.0643 +- 0.0038 | 0.0954 +- 0.0060 |
-| full_eeg | 0.1009 +- 0.0087 | 0.0659 +- 0.0040 | 0.0957 +- 0.0053 |
-| eog_surrogate_saved | 0.0586 +- 0.0028 | 0.0522 +- 0.0039 | 0.0595 +- 0.0029 |
-| ocular_surrogate | 0.0589 +- 0.0020 | 0.0541 +- 0.0066 | 0.0619 +- 0.0038 |
-| **eeg_rand2**, 100 draws (dimension-matched) | 0.0711 +- 0.0063, p95 0.0812 | -- | -- |
+| ocular_ablated (D6 list, 8 frontal channels removed) | 0.1040 +- 0.0073 | 0.0679 +- 0.0029 | 0.0949 +- 0.0049 |
+| full_eeg | 0.1037 +- 0.0071 | 0.0681 +- 0.0030 | 0.0950 +- 0.0056 |
+| eog_surrogate_saved | 0.0627 +- 0.0031 | 0.0547 +- 0.0020 | 0.0625 +- 0.0031 |
+| ocular_surrogate | 0.0614 +- 0.0019 | 0.0551 +- 0.0020 | 0.0617 +- 0.0026 |
+| **eeg_rand2**, 100 draws (dimension-matched) | 0.0723 +- 0.0052, p95 0.0806 | -- | -- |
 
-**Criterion 1 -- ablated approximately equals full.** 0.1068 against 0.1009, with
-the ablated arm marginally *higher*. Removing the channels an eye movement would
-dominate costs nothing.
+**Criterion 1 -- ablated equals full.** 0.1040 against 0.1037. At 20 subjects
+these differed by 0.006 and the ablated arm was nominally ahead; at 80 they are
+the same number. Removing the channels an eye movement would dominate costs
+nothing, and the earlier apparent gain was sampling noise.
 
-**Criterion 2 -- the dimension-matched control.** Over 100 random 2-filter draws,
-full EEG sits at the 100th percentile and the EOG surrogate at the **3rd** -- the
-surrogate is not merely unremarkable as a 2-dimensional projection of EEG, it is
-worse than 97% of random ones. Both halves of the feature-count confound are
-answered.
+**Criterion 2 -- the dimension-matched control.** Over 100 random 2-filter draws
+full EEG sits at the 100th percentile and the EOG surrogate at the **5th**. The
+surrogate is a below-average two-dimensional projection of EEG, not a privileged
+ocular measurement, and the EEG arm's margin over it is not feature count. Paired
+over folds, full_eeg - surrogate = +0.0410 (t(4) = 11.83, p = 0.0003).
 
-**Criterion 3 -- the pre-saccadic window, and a correction.** Fold-level
-one-sample tests against chance:
+**Criterion 3 -- the pre-saccadic window.**
 
 | arm, 0-150 ms | delta | t(4) | p | folds above chance |
 |---|---|---|---|---|
-| full_eeg | +0.0103 | 5.11 | **0.0069** | 5/5 |
-| ocular_ablated | +0.0088 | 4.66 | **0.0096** | 5/5 |
-| eog_surrogate_saved | -0.0033 | -1.73 | 0.159 | 1/5 |
-| ocular_surrogate | -0.0014 | -0.44 | 0.684 | 3/5 |
-| paired full_eeg - surrogate | +0.0137 | 4.31 | **0.0125** | -- |
+| full_eeg | +0.0125 | 8.34 | **0.0011** | 5/5 |
+| ocular_ablated | +0.0124 | 8.55 | **0.0010** | 5/5 |
+| eog_surrogate_saved | -0.0009 | -0.89 | 0.425 | 1/5 |
+| ocular_surrogate | -0.0005 | -0.45 | 0.676 | 1/5 |
+| paired full_eeg - surrogate | +0.0134 | 7.70 | **0.0015** | -- |
 
-The pre-saccadic window carries EEG signal, that signal survives ocular
-ablation, and both ocular surrogates sit at or below chance inside it. That is
-the strongest form the criterion could take.
+The window carries EEG signal, the signal survives ocular ablation, and both
+ocular surrogates sit at chance inside it. Larger and tighter than at 20 subjects
+(+0.0125 vs +0.0103, sd 0.0030 vs 0.0040, p 0.0011 vs 0.0069).
 
-**It also reverses what this file said an hour earlier.** On fold 0 alone every
-pre-saccadic arm was at chance, and that was written up as a null that "will not
-change with more compute". Four more folds changed it. The error was not the
-measurement but the generalisation: one fold of 18 held-out videos was treated as
-settling a stimulus-generalising question, and the claim was stated as
-compute-proof rather than as what it was, a single noisy estimate.
+**All three criteria hold, so G6b is declared.** The caveat attached to the
+20-subject version -- "repeat at 80 before it carries a paper" -- is discharged
+by this run rather than left standing.
 
-**All three criteria are met, so G6b is declarable** -- with the size of the
-inference honestly stated. These are n = 5 fold-level tests over a fixed pool of
-20 subjects, so they generalise over videos and not over subjects, and the
-pre-saccadic effect is +0.0103 on a chance of 0.0556. It is consistent (5/5
-folds, both EEG arms, surrogates on the other side of chance) but small and
-resting on four degrees of freedom. The declaration should be repeated at 80
-subjects before it carries a paper.
+Two things stay on the record. The surrogates *are* above chance in the full and
+sustained windows (p = 0.0099 and 0.0105), which is the documented limitation
+working exactly as written: ds005662 has no EOG channels, so HEOG/VEOG here are
+frontal-channel surrogates that carry genuine neural signal. And this is n = 5
+fold-level tests, so it generalises over videos rather than over subjects.
 
 **Not triggered here:** the arXiv placeholder that G6 gates. That is an
 outward-facing action and is the user's to take.
@@ -664,9 +661,49 @@ encoder has seen all 80 subjects and carries subject-conditioned parameters by
 design, so the number that settles the subject-invariance claim is the
 double_disjoint one, which is still running.
 
-`configs/factorized_fhmc_disent.yaml` re-runs the objective with a scale-free
-cross-correlation penalty. Both arms will be reported: this is the before and after
-of a defect, not a hyperparameter search.
+**The fixed arm has now run, and the factorization is one-directional.** With the
+penalty expressed as a cross-correlation and weighted so it binds
+(`configs/factorized_fhmc_disent.yaml`), over the same four selection folds:
+
+| subspace | target | chance | penalty off | penalty on | delta |
+|---|---|---|---|---|---|
+| geometry | video (18) | 0.056 | 0.220 | **0.092** | **-0.128** |
+| geometry | subject (80) | 0.013 | 0.691 | **0.469** | **-0.222** |
+| geometry | material | 0.155 | 0.422 | 0.326 | -0.097 |
+| geometry | orientation (4) | 0.250 | 0.610 | **0.590** | -0.020 |
+| content | orientation | 0.250 | 0.602 | 0.574 | -0.028 |
+| trunk | orientation | 0.250 | 0.582 | 0.573 | -0.010 |
+
+and 18-way retrieval retained inside the geometry subspace falls 0.066 -> 0.057
+against a chance of 0.056.
+
+**The geometry head became what it was designed to be.** Content leaves it (video
+0.220 -> 0.092, barely above chance), subject identity leaves it, material drops
+to its own majority rate, retrieval capacity goes to chance -- and orientation
+stays. That is a narrow, clean orientation code, and it is genuine evidence for
+half of contribution 2.
+
+**The content head did not.** Orientation decodes from it at 0.574 while decoding
+from the *trunk* at 0.573: the flip-invariant head does nothing to remove
+orientation. All four subspaces sit at 0.57-0.60. The penalty can push content
+out of a 32-dim geometry head; it cannot push orientation out of a 128-dim
+content head, because orientation is present in the trunk that both are projected
+from.
+
+This lines up with the model-free result (D22/Q1a): the video-identity geometry
+survives the flips at 69-92% of the split-half ceiling, so there is little
+equivariant variance for a dedicated head to claim. Two independent analyses, one
+trained and one not, reach the same place.
+
+**And it buys nothing on the endpoint.** Best-monitor per fold, penalty off ->
+on: 0.1297 -> 0.1311, 0.1381 -> 0.1411, 0.1349 -> 0.1353, 0.1398 -> 0.1393. Mean
++0.0011, three folds up and one down, far inside the design's minimal detectable
+difference. Making an inoperative term operative changed the representation in a
+readable way and left the primary endpoint where it was.
+
+Both arms are reported. This is the before and after of a defect, not a
+hyperparameter search, and the honest summary of contribution 2 is: the geometry
+factor is demonstrated, the content factor is not, and neither moves the number.
 
 ## The recurring shape
 

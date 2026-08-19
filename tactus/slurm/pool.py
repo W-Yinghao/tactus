@@ -262,7 +262,12 @@ def run_worker(args: argparse.Namespace) -> int:
         with log.open("a") as fh:
             fh.write(f"\n===== task {nxt} worker {worker} {_now()} =====\n$ {cmd}\n")
             fh.flush()
-            proc = subprocess.Popen(cmd, shell=True, stdout=fh, stderr=subprocess.STDOUT,
+            # bash, not the default /bin/sh: on this image sh is dash, where a
+            # perfectly ordinary `N=(10 20 40 80)` in a --cmd dies with
+            # `Syntax error: "(" unexpected` and every task in the pool fails a
+            # minute after launch.  The commands people write here are bash.
+            proc = subprocess.Popen(cmd, shell=True, executable="/bin/bash",
+                                    stdout=fh, stderr=subprocess.STDOUT,
                                     cwd=spec.get("cwd") or None)
             # heartbeat the claim so a long task is not reclaimed underneath us
             claim = dirs.claims / f"{nxt}.claim"
