@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-08-29T09:30Z)
+# TACTUS STATUS  (updated 2026-08-29T21:30Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
@@ -435,6 +435,13 @@ own paragraphs below because they govern which numbers may leave this repository
 | D20 | **done, half-supported** | unrunnable, then ran (10.88%, below ProtoNCE), then its disentangler turned out inoperative; fixed, the geometry factor is demonstrated and the content factor is not, and neither moves the endpoint | `results/probes_fhmc_{ws_f0123,disent}/PROBES.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
 | D22 | **compute line delivered** | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
+| D23 | **closed — substantive null** | three-space partial RSA at the 90-video grain, pre-registered before any EEG statistic and executed through two disclosed appendums. Tactile-adjective space beyond visual/affect/material/low-level: partial ρ 0.014, zero suprathreshold timepoints — while its *unpartialled* ρ peaks at 0.173, the exact false positive the mandatory material control existed to catch. Positive control (visual space) partial ρ 0.417, onset 100 ms [30, 140], p=0.0002. D29 ceiling says the null is substantive, not starved: EEG-side bound 0.535, B1 unique variance 68%. Independent tower (OpenCLIP ViT-H = frozen ImageBind vision) replicates the null but with only 13% unique variance — a weak test that fails to contradict rather than confirms. H2 (VT gating): null, direction reversed, p=0.774, orientation and SNR checks null, MDD d=0.64. Training version cancelled per the frozen grid | `tactus_work/results/multimodal_rsa{,_b2}/RESULTS.md`, `prereg/D23_*` |
+| D24 | **built; capability table pending its prereg** | captions.py: deterministic template from VTD metadata; the attribute grid alone leaves 26/90 captions duplicated (D17's collinearity in another costume) — the fixed description column separates all 90. text_emb cache written; text→EEG can be evaluated offline against existing trained arms (shared SigLIP2 space), definition to be frozen before running per D27 | `derived/text_emb/`, `tactus/data/captions.py` |
+| D25 | **done — negative** | the real 90×4 rater table rebuilt from the VTD OSF validation data and verified video-by-video against the published percentages (90/90; 175 raters per video — "350" is the two-batch total). SoftCLIP arm at the D27 primary (k=1): 0.0664 vs ProtoNCE 0.0874, paired −0.0209, p=0.006, 4/4 folds worse; k=4 reference −0.0375, p=0.008. Behavioural-affinity soft targets blur video identity — a net loss on retrieval | `results/runs/nice_softclip`, `derived/vtd_validation/` |
+| D26 | **deferred, premise removed** | user ruling 2026-08-29: no new dataset this wave; D23's grid cell then removed its premise — with no tactile-semantic signal in the seen-touch EEG, the felt/seen embedding-proximity question has no anchor here | — |
+| D27 | **in force, first execution audited** | k=1 primary applied to D25; prereg-before-data order enforced — its first run caught two frozen design errors before any EEG was touched (a dead composite and an A-redundant B1 RDM, appendum 1) and one miscalibrated QC gate | `prereg/` |
+| D28 | **recorded — skeleton is user-owned** | the D23 outcome removes the third beam (touch-semantic alignment); what remains is invariance + volume, content invariance, and the rigor battery. Title does not turn toward touch-semantic. Rearrangement is the user's call | — |
+| D29 | **done** | contrast ceiling computed and reported beside H1 (rule applied above); fhmc_dd audit: the "running" status was stale — 40/40 folds complete, era-homogeneous (6 pre-stamp folds classified correlation-era by their `max_abs_corr` signature; covariance-era folds correctly quarantined), FHMC dd 0.0964 vs ProtoNCE 0.1045, paired −0.0082, p=1e-5, 33/40 folds worse — FHMC loses in both regimes; DECISIONS_NEEDED §3 struck (resolved by D13) | `results/multimodal_rsa_b2/contrast_ceiling.json` |
 
 ## D15 -- the answer, and what may be quoted
 
@@ -785,9 +792,9 @@ from one fold while five sat on disk. Both now carry a fingerprint and a warning
 2. ~~**Centring convention.**~~ **Resolved by D12** — query *and* gallery, defined once in
    `tactus/eval/retrieval.py`. Worth 0.002 against a CI of width 0.008; adopted on principle
    (training-only statistics), not for accuracy.
-3. **Which SNR regressor Q3 uses.** The repaired scale-invariant per-subject ISC correlates only
-   ρ = 0.61 with the old one, and ρ = 0.19 with split-half reliability once the onset ERP is
-   removed. Any phenotype analysis built on the old column has to be redone.
+3. ~~**Which SNR regressor Q3 uses.**~~ **Resolved by D13** — split-half reliability is the
+   primary covariate, the old ISC column is voided, and every analysis since (including D23's
+   H2) uses the new one. Struck per D29.
 
 ## Next
 
