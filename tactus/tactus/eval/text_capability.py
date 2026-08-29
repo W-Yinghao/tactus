@@ -112,7 +112,9 @@ def tower_gate(fold_dir: Path, text90: np.ndarray, video90: np.ndarray,
                n_perm: int = N_PERM, seed: int = SEED) -> Dict[str, object]:
     t = project_texts(fold_dir, text90)
     v = project_texts(fold_dir, video90)
-    out = {}
+    import hashlib
+    out = {"projected_caption_sha1": hashlib.sha1(
+        np.ascontiguousarray(t).tobytes()).hexdigest()[:12]}
     for variant in ("centred", "raw"):
         tq = _centre(t, t.mean(axis=0)) if variant == "centred" else t
         vg = _centre(v, v.mean(axis=0)) if variant == "centred" else v
@@ -290,6 +292,72 @@ def perm_p_table_a(fold_dirs: List[Path], text90: np.ndarray, variant: str,
     return {"obs_top1": obs, "p": p, "n_perm": n_perm}
 
 
+def perm_p_table_b(fold_dirs: List[Path], text90: np.ndarray,
+                   n_perm: int = N_PERM, seed: int = SEED) -> Dict[str, float]:
+    """Video-level permutation of attribute labels within fold; statistic =
+    subject-and-fold mean balanced accuracy (centred variant)."""
+    vtd = load_vtd(Path(os.environ.get(
+        "TACTUS_BIDS_ROOT", "/projects/EEG-foundation-model/ds005662"))
+        / "code" / "analysis" / "VTD.csv")
+    from ..data.captions import _tercile_words
+    val_terc = np.array(_tercile_words(vtd["valence"].to_numpy(float),
+                                       ("unpleasant", "neutral", "pleasant")))
+    labels = {
+        "material": vtd.set_index("video_id")["material"].astype(str),
+        "approaching": vtd.set_index("video_id")["approaching"].astype(str),
+        "toucher": vtd.set_index("video_id")["toucher"].astype(str),
+        "valence": pd.Series(val_terc, index=vtd["video_id"].to_numpy()),
+    }
+    prompt_class = {"material": np.array(MATERIALS),
+                    "approaching": np.array(["yes", "no"]),
+                    "toucher": np.array(["hand", "object"]),
+                    "valence": np.array(["pleasant", "neutral", "unpleasant"])}
+
+    # cache predictions per fold: (n_subj, 18) predicted class index per attr
+    preds: Dict[str, List[np.ndarray]] = {a: [] for a in PROMPTS}
+    truths: Dict[str, List[np.ndarray]] = {a: [] for a in PROMPTS}
+    for fd in fold_dirs:
+        d = _fold_data(fd)
+        gal_vids = d["gallery_video_ids"].astype(int)
+        t_mean = project_texts(fd, text90).mean(axis=0)
+        pe = {a: project_texts(fd, _embed_prompts(PROMPTS[a])) for a in PROMPTS}
+        fold_preds = {a: [] for a in PROMPTS}
+        for sid in np.unique(d["subject_id"]):
+            m = d["subject_id"] == sid
+            z = d["z_eeg"][m].astype(np.float64)
+            vids = d["video_id"][m].astype(int)
+            protos = _centre(np.stack([_l2(z[vids == v].mean(axis=0)) for v in gal_vids]),
+                             _l2(z).mean(axis=0))
+            for a in PROMPTS:
+                pc = _centre(pe[a], t_mean)
+                fold_preds[a].append((protos @ pc.T).argmax(axis=1))
+        for a in PROMPTS:
+            preds[a].append(np.stack(fold_preds[a]))
+            truths[a].append(labels[a].loc[gal_vids].to_numpy())
+
+    def stat(a: str, perms: Optional[List[np.ndarray]] = None) -> float:
+        fold_means = []
+        for i, (P, T) in enumerate(zip(preds[a], truths[a])):
+            truth = T if perms is None else T[perms[i]]
+            pred_names = prompt_class[a][P]              # (n_subj, 18)
+            classes = np.unique(truth)
+            acc = np.zeros((len(classes), P.shape[0]))
+            for j, c in enumerate(classes):
+                mask = truth == c
+                acc[j] = (pred_names[:, mask] == c).mean(axis=1)
+            fold_means.append(acc.mean(axis=0))          # balanced acc per subject
+        return float(np.concatenate(fold_means).mean())
+
+    rng = np.random.default_rng(seed)
+    out = {}
+    for a in PROMPTS:
+        obs = stat(a)
+        null = np.array([stat(a, [rng.permutation(len(t)) for t in truths[a]])
+                         for _ in range(n_perm)])
+        out[a] = float((1 + np.sum(null >= obs)) / (1 + n_perm))
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # stages
 # --------------------------------------------------------------------------- #
@@ -364,11 +432,13 @@ def run_full(out_dir: Path) -> int:
               .groupby("subject_id").top1.mean())
         summary["text->eeg_k1"] = {"subject_mean_top1": float(k1.mean()), "chance": 1 / 18}
         battr = {}
+        b_perm = perm_p_table_b(fold_dirs, text90)
         for attr, g in B[B.variant == "centred"].groupby("attribute"):
             per_sub = g.groupby("subject_id").balanced_acc.mean()
             battr[attr] = {"balanced_acc": float(per_sub.mean()),
                            "majority_rate": float(g.majority_rate.mean()),
                            "chance": float(g.chance.iloc[0]),
+                           "p_perm": b_perm.get(attr),
                            "bundle_qualified": attr in BUNDLE_QUALIFIED}
         summary["table_b"] = battr
     else:
