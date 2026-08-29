@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-08-19T08:15Z)
+# TACTUS STATUS  (updated 2026-08-29T09:30Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
@@ -167,6 +167,57 @@ evaluation set proven across 12 arms on real data). Building it produced two fin
 - **Realised k is 3.90 at full data, not 4.** The D1 embargo plus the inner validation split leave
   ~4.9 repeats per (subject, condition) cell, not 8. This is a **pre-existing property of the
   reported 10.99% / 11.93%**, not something the new knob introduced.
+
+## 3.3 What the 80 subjects buy — the scaling curve is a trial-volume curve
+
+ProtoNCE, `within_subject` folds vf00–vf03, one fixed 80-subject test set (`test_uid_sha1`
+byte-identical across every arm, per fold). Chance 0.0556, split-half ceiling 0.143.
+
+**Arm 1 — vary training subjects** (trials ride along):
+
+| train subjects | train trials | g18 top1_pseudo | above chance | step | paired p |
+|---|---|---|---|---|---|
+| 10 | ~10.9k | 0.0914 | +0.0359 | — | — |
+| 20 | ~22.0k | 0.0984 | +0.0429 | +0.0070 | 0.0045 |
+| 40 | ~43.9k | 0.1107 | +0.0552 | +0.0123 | 0.039 |
+| 80 | ~87.8k | 0.1193 | +0.0637 | +0.0086 | 0.139 |
+
+Near-linear in log2(n): **~+0.0093 per doubling**, not yet saturated but the last step is no
+longer individually significant. 8× the data buys 1.77× the above-chance signal. Extrapolating
+the log-linear slope, touching the 0.143 ceiling would take **~450 subjects** at this recipe.
+
+**Arm 2 — the confound resolved.** Arm 1 varies subjects and trials *together* (10.9k → 87.8k).
+The matched arm keeps all 80 training subjects and subsamples to the same trial budgets:
+
+| trial budget | few subjects | 80 subjects, matched trials | diversity effect | p |
+|---|---|---|---|---|
+| 10,953 | 0.0914 (10 subj) | 0.0879 | −0.0035 | 0.141 |
+| 21,987 | 0.0984 (20 subj) | 0.1006 | +0.0021 | 0.548 |
+| 43,912 | 0.1107 (40 subj) | 0.1120 | +0.0013 | 0.824 |
+
+At every matched budget the pooled endpoint is indistinguishable between 10-and-many-trials-each
+and 80-and-few-trials-each. **The curve above is a trial-volume curve, not a subject-diversity
+curve.** Consistent with the volume account: within a fixed 80 subjects, doubling trials
+43.9k → 87.8k buys +0.0072 (p=0.057) — the same size as arm 1's "40→80 subjects" step.
+
+**Why the pooled equality, when subjects should matter?** The per-subject split shows two real
+effects that trade off exactly. Test subjects *seen* in training beat *unseen* ones on the
+primary metric: at 10 training subjects +0.0271 (0.1151 vs 0.0880, p=0.0011), at 20 +0.0112
+(p=0.0026), at 40 +0.0144 (p=0.0144). The matched arm converts 70 unseen test subjects into seen
+ones, but cuts each subject's own training trials 8× — and the two effects cancel to within
+noise. Notably, subj10's *seen* subjects (0.1151 on ~1.1k own trials) sit near the full-data
+80-subject figure (0.1193): a subject's own decodability is mostly bought with that subject's own
+trials, and other subjects' data transfers as generic volume.
+
+Validity: arm 1 folds all carry `code_commit=ab1b888`, arm 2 folds `065c0c5`; the diff between
+those commits touches only STATUS.md and pool.py submission logic, no training code. All arms ran
+A100/L40S/H100, 3–9 min per fold.
+
+**Implication for "is this dataset worth it".** The distinguishing asset is the **230,400
+trials**, not the 80 heads per se — within-subject decoding gains come from volume, and unseen-
+subject transfer (the loso regime's question) is what subject diversity is actually for. The
+recipe is not saturated at 87.8k trials, so the trial count is the first thing a stronger loss
+should be given, and the last thing to subsample away.
 
 ---
 
@@ -383,7 +434,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, half-supported** | unrunnable, then ran (10.88%, below ProtoNCE), then its disentangler turned out inoperative; fixed, the geometry factor is demonstrated and the content factor is not, and neither moves the endpoint | `results/probes_fhmc_{ws_f0123,disent}/PROBES.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
-| D22 | running | offline line done (D11/D12); training line is FHMC dd (40 folds) + the fixed arm | -- |
+| D22 | **compute line delivered** | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
 
 ## D15 -- the answer, and what may be quoted
 
@@ -744,7 +795,7 @@ from one fold while five sat on disk. Both now carry a fingerprint and a warning
    `tactus/losses/my_loss.py` plus one import line, and a config with one `loss.name` key. Then
    `python slurm/pool.py submit --name train_myloss --tasks 0-4 --workers 5 --gpus 1 ...`.
    Baselines are in place with CIs, permutation p, ceiling fractions and the design's MDD.
-2. G6b: dimension-matched ocular control and the `wm100_800` window fix.
-3. Trial-count scaling curve (knob ready, needs the k=1 companion arm).
-4. Subject-scaling curve (10/20/40/79), Q1a equivariance, Q2 onset curves, Q3 phenotype.
-5. OSF pre-registration.
+2. Trial-count scaling curve below frac ½ (needs the k=1 companion arm; above ½ the
+   subject-scaling grid in §3.3 already covers it).
+3. LOSO + k calibration curve; Q2 rebuild on `frame_emb`.
+4. OSF pre-registration (must encode the D16 fold-4 confirmation protocol).
