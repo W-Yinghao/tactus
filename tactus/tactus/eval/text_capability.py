@@ -310,7 +310,7 @@ def run_probe(out_dir: Path) -> int:
     a1, b1 = eval_fold(fd, text90, "centred", subjects=None)
     a1 = a1[a1.subject_id.isin(sorted(a1.subject_id.unique())[:2])]
     a2, _ = eval_fold(fd, text90, "centred", subjects=sorted(
-        _fold_data(fd)["subject_id"].astype(int).tolist())[:2])
+        set(_fold_data(fd)["subject_id"].astype(int).tolist()))[:2])
     x = a1[a1.grain == "prototype"].sort_values(["subject_id", "direction"]).top1.to_numpy()
     y = a2[a2.grain == "prototype"].sort_values(["subject_id", "direction"]).top1.to_numpy()
     if not np.array_equal(x, y):
