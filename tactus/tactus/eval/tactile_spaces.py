@@ -110,7 +110,17 @@ def adjective_embeddings() -> np.ndarray:
         for i, adj in enumerate(ADJECTIVES):
             prompts = [t.format(adj=adj) for t in TEMPLATES]
             tok = proc(text=prompts, padding="max_length", return_tensors="pt")
-            feats = model.get_text_features(**tok).double().numpy()
+            raw = model.get_text_features(**tok)
+            if not torch.is_tensor(raw):
+                # transformers-version drift: may be an output object (same
+                # attribute-probing order as encode.py's pooling contract)
+                for attr in ("text_embeds", "pooler_output"):
+                    if getattr(raw, attr, None) is not None:
+                        raw = getattr(raw, attr)
+                        break
+                else:
+                    raise TypeError(f"get_text_features returned {type(raw)} with no text_embeds/pooler_output")
+            feats = raw.double().numpy()
             feats /= np.linalg.norm(feats, axis=1, keepdims=True)
             v = feats.mean(axis=0)
             out[i] = v / np.linalg.norm(v)
@@ -174,20 +184,61 @@ def lowlevel_features(stim_root: Path) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # QC sentinel 2: manipulation check
 # --------------------------------------------------------------------------- #
-def manipulation_check(profile: np.ndarray, vtd: pd.DataFrame,
-                       n_perm: int = 5000, seed: int = 0) -> Dict[str, float]:
+def _composite_check_v1(profile: np.ndarray, threat: np.ndarray,
+                        n_perm: int, seed: int) -> Dict[str, float]:
+    """Original sentinel (appendum 1 keeps it in the manifest as audit trail)."""
     from scipy import stats
 
     idx = [ADJECTIVES.index(a) for a in MANIPULATION_COMPOSITE]
     comp = profile[:, idx].mean(axis=1)
-    threat = vtd["threat"].to_numpy(dtype=np.float64)
     r_obs = float(stats.spearmanr(comp, threat).statistic)
     rng = np.random.default_rng(seed)
     null = np.array([
         stats.spearmanr(comp, rng.permutation(threat)).statistic for _ in range(n_perm)
     ])
-    p = float((1 + np.sum(null >= r_obs)) / (1 + n_perm))  # one-sided: positive
+    p = float((1 + np.sum(null >= r_obs)) / (1 + n_perm))
     return {"r": r_obs, "p": p, "n_perm": n_perm, "passed": bool(r_obs > 0 and p < 0.05)}
+
+
+def _lovo_predict(profile: np.ndarray, y: np.ndarray, alpha: float = 1.0) -> np.ndarray:
+    """Leave-one-video-out ridge predictions, features standardized per fold."""
+    n = profile.shape[0]
+    preds = np.zeros(n)
+    for i in range(n):
+        tr = np.ones(n, dtype=bool)
+        tr[i] = False
+        mu, sd = profile[tr].mean(axis=0), profile[tr].std(axis=0).clip(1e-12)
+        Xtr = (profile[tr] - mu) / sd
+        Xte = (profile[i] - mu) / sd
+        ym = y[tr].mean()
+        w = np.linalg.solve(Xtr.T @ Xtr + alpha * np.eye(Xtr.shape[1]),
+                            Xtr.T @ (y[tr] - ym))
+        preds[i] = float(Xte @ w + ym)
+    return preds
+
+
+def manipulation_check(profile: np.ndarray, vtd: pd.DataFrame,
+                       n_perm: int = 5000, seed: int = 0) -> Dict[str, object]:
+    """Sentinel 2 v2 (appendum 1): does the scoring MECHANISM carry signal?
+
+    LOVO ridge from the full 30-adjective profile to VTD threat; statistic =
+    Spearman(predicted, actual); null = video-level permutations of threat,
+    the ridge refit under each.  The v1 composite is reported alongside but no
+    longer gates.
+    """
+    from scipy import stats
+
+    threat = vtd["threat"].to_numpy(dtype=np.float64)
+    r_obs = float(stats.spearmanr(_lovo_predict(profile, threat), threat).statistic)
+    rng = np.random.default_rng(seed)
+    null = np.empty(n_perm)
+    for k in range(n_perm):
+        y_p = rng.permutation(threat)
+        null[k] = stats.spearmanr(_lovo_predict(profile, y_p), y_p).statistic
+    p = float((1 + np.sum(null >= r_obs)) / (1 + n_perm))
+    return {"version": "v2_lovo_ridge (appendum 1)", "r": r_obs, "p": p,
+            "n_perm": n_perm, "passed": bool(r_obs > 0 and p < 0.05),
+            "v1_composite_audit": _composite_check_v1(profile, threat, n_perm, seed)}
 
 
 # --------------------------------------------------------------------------- #
@@ -204,9 +255,13 @@ def build(out_dir: Path, *, emb_dir: Path, vtd_csv: Path, stim_root: Path,
     profile = space_B1_profile(emb_dir / "siglip2-base-frames.npz", adj)
     low = lowlevel_features(stim_root)
 
+    profile_z = (profile - profile.mean(axis=0)) / profile.std(axis=0).clip(1e-12)
     rdms: Dict[str, np.ndarray] = {
         "A": space_A(emb_dir / "siglip2-base.npz"),
-        "B1": _rdm_pearson(profile),
+        # Appendum 1 revision 2: per-adjective z-scoring first -- the raw
+        # version had median row correlation 0.76 and was rho=0.82 redundant
+        # with A (per-adjective baselines dominated).
+        "B1": _rdm_pearson(profile_z),
         "C": space_C(vtd),
         "material": _rdm_categorical(vtd["material"]),
         "lowlevel": _rdm_euclid_z(low),

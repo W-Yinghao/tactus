@@ -1,0 +1,44 @@
+# NICE encoder + SoftCLIP against the real VTD rater-count targets (D25).
+#
+# The target matrix is the Bhattacharyya affinity between per-video
+# Neutral/Pleasant/Unpleasant/Painful rating distributions, rebuilt from the
+# VTD OSF validation data (osf.io/jvkqa) by tactus/data/rater_counts.py and
+# verified video-by-video against the published percentage table (90/90).
+# Each video was rated by 175 raters (two disjoint 175-rater batches cover
+# the 90 videos; "350 raters" is the total, not the per-video count).
+#
+# Per D27 the primary battlefield for this arm is k=1 single-trial; k=4 is a
+# reference row only.  Selection on within_subject folds 0-3 (D16: fold 4
+# stays sealed).
+#
+#   python -m tactus.train.run -c configs/nice_softclip.yaml --regime within_subject --folds F
+
+base: default.yaml
+
+run:
+  name: nice_softclip
+  notes: >
+    SoftCLIP with the real 90x4 rater-count targets: soft video-level
+    similarity from behavioural rating distributions, disagreement-weighted
+    anchors. The D25 arm -- tests whether group-behavioural affinity is a
+    better contrast target than the identity codebook.
+
+loss:
+  name: softclip
+  key: video_id
+  target_matrix: /projects/EEG-foundation-model/tactus_work/derived/vtd_validation/softclip_target_video90.npy
+  row_weights: /projects/EEG-foundation-model/tactus_work/derived/vtd_validation/softclip_row_weights_video90.npy
+  target_temperature: 0.1
+  temperature: 0.07
+  learnable_temperature: true
+
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25
