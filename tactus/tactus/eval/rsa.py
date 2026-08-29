@@ -544,6 +544,10 @@ class RSAResult:
     n_perm: int
     controls: Tuple[str, ...] = ()
     noise_ceiling: Optional[Tuple[float, float]] = None
+    #: per-timepoint (1 - alpha_pointwise) quantile of the permutation null for
+    #: the SAME statistic as the inference curve; lets a caller re-test resampled
+    #: curves against the identical threshold (D23 onset bootstrap).
+    point_thresh: Optional[np.ndarray] = None
 
     def to_frame(self) -> pd.DataFrame:
         df = pd.DataFrame(
@@ -781,6 +785,7 @@ def rsa_time_course(
         clusters, null_max, p_point = _cluster_inference(
             r_obs, null, t_axis, alpha_pointwise=alpha_pointwise
         )
+        point_thresh = np.quantile(null, 1.0 - alpha_pointwise, axis=0)
         results[name] = RSAResult(
             model=name,
             times=t_axis,
@@ -791,6 +796,7 @@ def rsa_time_course(
             null_max_cluster=null_max,
             n_perm=n_perm,
             controls=() if is_control else control_names,
+            point_thresh=point_thresh,
         )
     return results
 
