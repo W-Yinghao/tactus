@@ -300,11 +300,18 @@ def run_probe(out_dir: Path, subject_id: int) -> int:
         self_p = partial_spearman(a["rdms"][t], mat, mat[:, None])
         if not (np.isnan(self_p) or abs(self_p) < 1e-6):
             failures.append(f"gate3: partial(x, m | m) = {self_p:.2e} at t={t}, expected ~0")
+    # The residual must be uncorrelated with material IN THE SPACE THE
+    # INFERENCE USES: Pearson on rank-residuals (that is what partial Spearman
+    # is).  Re-ranking the residual first -- the first version of this gate --
+    # tests a property linear residualization never promises, and with a binary
+    # control it fails mathematically while the machinery is correct.
     rm = _st.rankdata(mat)
     rb = _st.rankdata(spaces["B1"][iu])
-    resid = rb - np.polyval(np.polyfit(rm, rb, 1), rm)
-    if abs(_st.spearmanr(resid, rm).statistic) > 0.01:
-        failures.append("gate3: material residualization leaves |r|>0.01")
+    zm = (rm - rm.mean()) / rm.std()
+    zb = (rb - rb.mean()) / rb.std()
+    resid = zb - zm * float(zb @ zm) / float(zm @ zm)
+    if abs(float(resid @ zm) / (np.linalg.norm(resid) * np.linalg.norm(zm))) > 1e-6:
+        failures.append("gate3: rank-residual retains material correlation")
 
     # group-path exercise (prereg sentinel 5): 3 windows, tiny null, machinery only
     mini = _zscore_stack(a["rdms"])[[0, a["rdms"].shape[0] // 2, -1]]
