@@ -176,6 +176,19 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
             notes="the NICE/ATM reference encoder; keep for comparability with prior work",
         ),
         _spec(
+            tag="clip-vit-h14-laion",
+            hf_id="laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+            family="image_clip",
+            n_frames=15,
+            pooling="per-frame get_image_features -> L2 -> mean -> L2",
+            notes=(
+                "the frozen vision tower of ImageBind (Girdhar et al. 2023 init the "
+                "image/text encoders from OpenCLIP ViT-H and keep them frozen), i.e. "
+                "the space UniTouch aligns touch-sensor data into -- D23's B2 "
+                "independent-tower space without the imagebind package"
+            ),
+        ),
+        _spec(
             tag="xclip-base-32",
             hf_id="microsoft/xclip-base-patch32",
             family="xclip",
