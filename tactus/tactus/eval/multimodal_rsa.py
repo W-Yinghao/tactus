@@ -169,6 +169,8 @@ def run_group(out_dir: Path, subjects: Sequence[int], n_perm: int = N_PERM) -> N
 def _mark_clusters(df: pd.DataFrame, res) -> pd.DataFrame:
     df = df.copy()
     df["in_cluster"] = False
+    if len(res.clusters) == 0 or "p_cluster" not in res.clusters.columns:
+        return df
     for _, cl in res.clusters.iterrows():
         if cl["p_cluster"] < 0.05:
             df.loc[(df.time >= cl["t_start"]) & (df.time <= cl["t_end"]), "in_cluster"] = True
@@ -185,6 +187,10 @@ def _partial_curve(stack: np.ndarray, spaces: Dict[str, np.ndarray], target: str
 
 def _onset_block(res, all_stacks: np.ndarray, spaces: Dict[str, np.ndarray],
                  target: str, controls: Sequence[str], centres: np.ndarray) -> dict:
+    # An empty clusters frame (no suprathreshold timepoint at all) has no
+    # p_cluster column -- that outcome is a legitimate grid cell, not an error.
+    if len(res.clusters) == 0 or "p_cluster" not in res.clusters.columns:
+        return {"n_clusters_sig": 0, "clusters": []}
     sig = res.clusters[res.clusters.p_cluster < 0.05]
     out = {"n_clusters_sig": int(len(sig)),
            "clusters": res.clusters.to_dict(orient="records")}
