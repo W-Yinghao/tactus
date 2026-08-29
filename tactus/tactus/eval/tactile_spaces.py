@@ -329,7 +329,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     man = json.loads((args.out / "spaces_manifest.json").read_text())
     qc = man["qc_manipulation_check"]
     print(f"wrote {npz}")
-    print(f"QC sentinel 2 (sharp/prickly/spiky vs threat): r={qc['r']:.3f} "
+    print(f"QC sentinel 2 ({qc.get('version', 'v1')}): r={qc['r']:.3f} "
           f"p={qc['p']:.4f} -> {'PASS' if qc['passed'] else 'FAIL -- STOP'}")
     return 0 if qc["passed"] else 1
 
