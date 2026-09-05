@@ -279,6 +279,81 @@ def run_h2(out_dir: Path, subjects: Sequence[int]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# contrast ceiling (D29 / appendum 2, report layer)
+# --------------------------------------------------------------------------- #
+def run_ceiling(out_dir: Path, subjects: Sequence[int], n_splits: int = 20) -> None:
+    """Residual-EEG split-half reliability + model unique-variance fractions.
+
+    Decides which wording the H1 null carries (appendum 2): the bound on any
+    observable partial correlation at t is sqrt(Spearman-Brown reliability of
+    the residualized group EEG RDM); the stimulus side reports how much of
+    B1/B2 survives the partialling at all.
+    """
+    from scipy import stats
+
+    spaces = _load_spaces(out_dir)
+    _, all_stacks, centres = group_stack(out_dir, subjects)
+    n_sub, n_t, _ = all_stacks.shape
+
+    iu = np.triu_indices(N_VIDEOS, 1)
+    controls = [c for c in PRIMARY_CONTRASTS["B1"] if c in spaces]
+    ctrl_ranks = np.column_stack([stats.rankdata(spaces[c][iu]) for c in controls])
+    ctrl_z = ctrl_ranks - ctrl_ranks.mean(axis=0)
+
+    def _resid(vec: np.ndarray) -> np.ndarray:
+        r = stats.rankdata(vec)
+        r = r - r.mean()
+        beta, *_ = np.linalg.lstsq(ctrl_z, r, rcond=None)
+        return r - ctrl_z @ beta
+
+    rel = np.zeros((n_splits, n_t))
+    for k in range(n_splits):
+        rng = np.random.default_rng(k)
+        perm = rng.permutation(n_sub)
+        h1 = all_stacks[perm[: n_sub // 2]].mean(axis=0)
+        h2 = all_stacks[perm[n_sub // 2:]].mean(axis=0)
+        for t in range(n_t):
+            a, b = _resid(h1[t]), _resid(h2[t])
+            den = np.linalg.norm(a) * np.linalg.norm(b)
+            rel[k, t] = float(a @ b) / den if den > 1e-12 else np.nan
+
+    r_half = np.nanmean(rel, axis=0)
+    r_sb = 2 * r_half / (1 + np.abs(r_half))
+    bound = np.sqrt(np.clip(r_sb, 0, None))
+
+    unique = {}
+    for m in ("B1", "B2"):
+        if m not in spaces:
+            continue
+        y = stats.rankdata(spaces[m][iu])
+        y = y - y.mean()
+        beta, *_ = np.linalg.lstsq(ctrl_z_for(m, spaces, iu, stats), y, rcond=None)
+        resid = y - ctrl_z_for(m, spaces, iu, stats) @ beta
+        unique[m] = float((resid @ resid) / (y @ y))
+
+    h2_mask = (centres >= H2_WINDOW_MS[0]) & (centres <= H2_WINDOW_MS[1])
+    out = {
+        "n_splits": n_splits, "controls": controls,
+        "ceiling_sb_mean_150_600": float(np.nanmean(r_sb[h2_mask])),
+        "bound_sqrt_mean_150_600": float(np.nanmean(bound[h2_mask])),
+        "bound_sqrt_peak": float(np.nanmax(bound)),
+        "unique_variance_fraction": unique,
+    }
+    pd.DataFrame({"time": centres, "rel_half": r_half, "rel_sb": r_sb,
+                  "bound_sqrt": bound}).to_csv(out_dir / "contrast_ceiling.csv", index=False)
+    (out_dir / "contrast_ceiling.json").write_text(json.dumps(out, indent=2))
+    print(json.dumps(out, indent=2))
+
+
+def ctrl_z_for(model: str, spaces, iu, stats) -> np.ndarray:
+    ranks = np.column_stack([
+        stats.rankdata(spaces[c][iu])
+        for c in PRIMARY_CONTRASTS[model] if c in spaces
+    ])
+    return ranks - ranks.mean(axis=0)
+
+
+# --------------------------------------------------------------------------- #
 # probe (sentinel 5) -- one subject, machinery gates, no aggregates viewed
 # --------------------------------------------------------------------------- #
 def run_probe(out_dir: Path, subject_id: int) -> int:
@@ -351,7 +426,7 @@ def run_probe(out_dir: Path, subject_id: int) -> int:
 # --------------------------------------------------------------------------- #
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("stage", choices=["build-subject", "probe", "group", "h2"])
+    ap.add_argument("stage", choices=["build-subject", "probe", "group", "h2", "ceiling"])
     ap.add_argument("--subject", type=int, default=1)
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--n-perm", type=int, default=N_PERM)
@@ -369,6 +444,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.stage == "h2":
         run_h2(out_dir, subjects)
+        return 0
+    if args.stage == "ceiling":
+        run_ceiling(out_dir, subjects)
         return 0
     return 2
 
