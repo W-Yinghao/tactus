@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-08-29T23:55Z)
+# TACTUS STATUS  (updated 2026-09-06T00:30Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
@@ -26,10 +26,18 @@ scores. Chance = 5.56%.
 | within_subject · NICE+ProtoNCE | 5 | **11.93%** | 11.32–12.55 | 0.0002 | 12.6 | 0.84 ± 0.10 | 75.0% |
 | within_subject · EA+ridge (linear floor) | 5 | 9.89% | 9.47–10.29 | 0.001 | 10.3 | — | — |
 | **double_disjoint · NICE+ProtoNCE** | **40** | **10.45%** | 9.98–10.92 | **0.0002** | **12.6** | **0.835** | **76.9%** |
+| loso · NICE+ProtoNCE (unseen subject, *seen* videos) | 8 | 14.39% | 13.60–15.25 (fold bootstrap) | — | — | — | — |
 
 The double-disjoint cell is the headline: 5 video folds × 8 subject folds, every subject held
 out exactly once per video fold. It sits only 1.5 points below the within-subject number and
 recovers **the same** share of what the data can support — 0.835 in both regimes.
+
+The loso row completes the 2×2. With videos *seen* in training and only the subject new,
+retrieval reaches 14.39% — above within_subject's 11.93% — so the stimulus-unseen penalty
+(~2.5 pts) is the larger of the two and the subject-unseen penalty is small, exactly as the
+§3.3 volume analysis and the seen/unseen split predicted. k=1 single-trial: 10.72%. No
+permutation p is quoted for loso: its gallery is drawn from videos the model trained on, so the
+video-level null of the other rows does not transfer unchanged.
 
 The ceiling column is a scale, not a discriminator, and it took three attempts to make it even
 that. Its denominator is quoted with the spread its own subject sampling implies (§10, D15);
@@ -434,7 +442,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, half-supported** | unrunnable, then ran (10.88%, below ProtoNCE), then its disentangler turned out inoperative; fixed, the geometry factor is demonstrated and the content factor is not, and neither moves the endpoint | `results/probes_fhmc_{ws_f0123,disent}/PROBES.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
-| D22 | **compute line delivered** | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
+| D22 | **compute line delivered; LOSO cell added** | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
 | D23 | **closed — substantive null** | three-space partial RSA at the 90-video grain, pre-registered before any EEG statistic and executed through two disclosed appendums. Tactile-adjective space beyond visual/affect/material/low-level: partial ρ 0.014, zero suprathreshold timepoints — while its *unpartialled* ρ peaks at 0.173, the exact false positive the mandatory material control existed to catch. Positive control (visual space) partial ρ 0.417, onset 100 ms [30, 140], p=0.0002. D29 ceiling says the null is substantive, not starved: EEG-side bound 0.535, B1 unique variance 68%. Independent tower (OpenCLIP ViT-H = frozen ImageBind vision) replicates the null but with only 13% unique variance — a weak test that fails to contradict rather than confirms. H2 (VT gating): null, direction reversed, p=0.774, orientation and SNR checks null, MDD d=0.64. Training version cancelled per the frozen grid | `tactus_work/results/multimodal_rsa{,_b2}/RESULTS.md`, `prereg/D23_*` |
 | D24 | **capability demonstrated** | pre-registered, then run offline against the frozen ProtoNCE folds: a caption retrieves the correct video's EEG prototype at **0.1196** vs chance 0.0556 (p=0.0002, n=80 subjects; EEG→text 0.0927; k=1 0.0736) — with no text anywhere in training. Scale: the tower's own text→video link is 0.156/90 and only exists under modality-gap centring. Attribute prompts: only the toucher/material bundle clears its permutation null (0.561, p=0.001) and nothing clears its raw-majority bar; a grid-wording defect (majority vs balanced baselines) is disclosed and booked conservatively. Disclosed arm finding along the way: the ProtoNCE video projector is bit-identical across folds — frozen at seeded init, no gradient path through the detached EMA banks — so the shared space is a fixed random projection of SigLIP2, and both alignments survive it | `tactus_work/results/text_capability/RESULTS.md`, `prereg/D24_CAPABILITY_FROZEN.md` |
 | D25 | **done — negative** | the real 90×4 rater table rebuilt from the VTD OSF validation data and verified video-by-video against the published percentages (90/90; 175 raters per video — "350" is the two-batch total). SoftCLIP arm at the D27 primary (k=1): 0.0664 vs ProtoNCE 0.0874, paired −0.0209, p=0.006, 4/4 folds worse; k=4 reference −0.0375, p=0.008. Behavioural-affinity soft targets blur video identity — a net loss on retrieval | `results/runs/nice_softclip`, `derived/vtd_validation/` |
@@ -804,5 +812,5 @@ from one fold while five sat on disk. Both now carry a fingerprint and a warning
    Baselines are in place with CIs, permutation p, ceiling fractions and the design's MDD.
 2. Trial-count scaling curve below frac ½ (needs the k=1 companion arm; above ½ the
    subject-scaling grid in §3.3 already covers it).
-3. LOSO + k calibration curve; Q2 rebuild on `frame_emb`.
+3. k calibration curve (offline, needs its freeze); Q2 rebuild on `frame_emb`. LOSO done (§1).
 4. OSF pre-registration (must encode the D16 fold-4 confirmation protocol).

@@ -391,8 +391,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Train a TACTUS config over every fold of a regime.",
     )
     p.add_argument("--config", "-c", required=True, help="path to a YAML config")
-    p.add_argument("--override", "-o", nargs="*", default=[], metavar="key=value",
-                   help="OmegaConf dot-list overrides, e.g. loss.name=protonce train.epochs=40")
+    # action="extend": a repeated -o ACCUMULATES.  With the default action a second
+    # -o silently replaced the first, and an arm meant to subsample trials trained
+    # on the full set while its tag claimed otherwise (four identical runs, 12 GPU
+    # tasks) before anyone noticed.
+    p.add_argument("--override", "-o", nargs="*", action="extend", default=[],
+                   metavar="key=value",
+                   help="OmegaConf dot-list overrides, e.g. loss.name=protonce train.epochs=40; "
+                        "may be repeated, all occurrences accumulate")
     p.add_argument("--regime", default=None,
                    help="shorthand for --override eval.regime=...")
     p.add_argument("--device", default=None, help="cuda, cuda:1, cpu (default: auto)")
