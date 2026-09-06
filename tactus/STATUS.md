@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-09-06T00:30Z)
+# TACTUS STATUS  (updated 2026-09-06T04:10Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
@@ -175,6 +175,24 @@ evaluation set proven across 12 arms on real data). Building it produced two fin
 - **Realised k is 3.90 at full data, not 4.** The D1 embargo plus the inner validation split leave
   ~4.9 repeats per (subject, condition) cell, not 8. This is a **pre-existing property of the
   reported 10.99% / 11.93%**, not something the new knob introduced.
+
+**The trial-scaling curve, with its k=1 companion (2026-09-06).** ProtoNCE, 80 subjects, folds
+0–3, four trial budgets, curriculum on (realised k collapsing 3.90 → 2.70 → 1.45 → 1.00) against
+curriculum off (single-trial anchors throughout):
+
+| trials | curriculum on, k=4 eval | curriculum off, k=4 eval | off − on (k=1 eval) |
+|---|---|---|---|
+| 10,953 | 0.0879 | 0.0880 | +0.0001 (p=0.39) |
+| 21,987 | 0.1006 | 0.1034 | +0.0026 (p=0.025) |
+| 43,912 | 0.1120 | 0.1142 | +0.0035 (p=0.041) |
+| 87,839 | 0.1193 | 0.1209 | +0.0057 (p=0.015) |
+
+The two curves lie on top of each other at the primary endpoint (every difference ns), so the
+curve is a **genuine volume curve** — the curriculum-collapse worry above was real in mechanism
+but irrelevant in effect. The SNR curriculum buys nothing at any budget; training on single
+trials is slightly better *for single-trial evaluation* (+0.3–0.6 pp, 3/4 budgets significant),
+which is what one would expect. First attempt at this arm trained four identical full-data
+runs because a repeated `-o` replaced rather than accumulated (fixed in `run.py`, tested).
 
 ## 3.3 What the 80 subjects buy — the scaling curve is a trial-volume curve
 
@@ -442,7 +460,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D19 | **answered** | metric difference, not a real one -- the three disputed targets never beat their own majority rate; see below | `results/baselines/mvpa{,_balanced}/w0600_sequence/report.md` |
 | D20 | **done, half-supported** | unrunnable, then ran (10.88%, below ProtoNCE), then its disentangler turned out inoperative; fixed, the geometry factor is demonstrated and the content factor is not, and neither moves the endpoint | `results/probes_fhmc_{ws_f0123,disent}/PROBES.md` |
 | D21 | **done** | lambda_1 contributes +0.08 pts, indistinguishable from zero; "dual contrast" retired from the contributions | `results/runs/atm_composite_l1_{00,02}` |
-| D22 | **compute line delivered; LOSO cell added** | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
+| D22 | **closed** — all compute items delivered (subject curve, matched arm, LOSO, k=1 companion) | offline line done (D11/D12); FHMC dd grid ran; subject-scaling curve + trial-matched control separate diversity from volume (§3.3): the curve is a trial-volume curve, ~+0.0093 per doubling, not saturated at 87.8k | `results/runs/nice_protonce__subj{10,20,40,80}`, `__s80t{10953,21987,43912}` |
 | D23 | **closed — substantive null** | three-space partial RSA at the 90-video grain, pre-registered before any EEG statistic and executed through two disclosed appendums. Tactile-adjective space beyond visual/affect/material/low-level: partial ρ 0.014, zero suprathreshold timepoints — while its *unpartialled* ρ peaks at 0.173, the exact false positive the mandatory material control existed to catch. Positive control (visual space) partial ρ 0.417, onset 100 ms [30, 140], p=0.0002. D29 ceiling says the null is substantive, not starved: EEG-side bound 0.535, B1 unique variance 68%. Independent tower (OpenCLIP ViT-H = frozen ImageBind vision) replicates the null but with only 13% unique variance — a weak test that fails to contradict rather than confirms. H2 (VT gating): null, direction reversed, p=0.774, orientation and SNR checks null, MDD d=0.64. Training version cancelled per the frozen grid | `tactus_work/results/multimodal_rsa{,_b2}/RESULTS.md`, `prereg/D23_*` |
 | D24 | **capability demonstrated** | pre-registered, then run offline against the frozen ProtoNCE folds: a caption retrieves the correct video's EEG prototype at **0.1196** vs chance 0.0556 (p=0.0002, n=80 subjects; EEG→text 0.0927; k=1 0.0736) — with no text anywhere in training. Scale: the tower's own text→video link is 0.156/90 and only exists under modality-gap centring. Attribute prompts: only the toucher/material bundle clears its permutation null (0.561, p=0.001) and nothing clears its raw-majority bar; a grid-wording defect (majority vs balanced baselines) is disclosed and booked conservatively. Disclosed arm finding along the way: the ProtoNCE video projector is bit-identical across folds — frozen at seeded init, no gradient path through the detached EMA banks — so the shared space is a fixed random projection of SigLIP2, and both alignments survive it | `tactus_work/results/text_capability/RESULTS.md`, `prereg/D24_CAPABILITY_FROZEN.md` |
 | D25 | **done — negative** | the real 90×4 rater table rebuilt from the VTD OSF validation data and verified video-by-video against the published percentages (90/90; 175 raters per video — "350" is the two-batch total). SoftCLIP arm at the D27 primary (k=1): 0.0664 vs ProtoNCE 0.0874, paired −0.0209, p=0.006, 4/4 folds worse; k=4 reference −0.0375, p=0.008. Behavioural-affinity soft targets blur video identity — a net loss on retrieval | `results/runs/nice_softclip`, `derived/vtd_validation/` |
@@ -810,7 +828,6 @@ from one fold while five sat on disk. Both now carry a fingerprint and a warning
    `tactus/losses/my_loss.py` plus one import line, and a config with one `loss.name` key. Then
    `python slurm/pool.py submit --name train_myloss --tasks 0-4 --workers 5 --gpus 1 ...`.
    Baselines are in place with CIs, permutation p, ceiling fractions and the design's MDD.
-2. Trial-count scaling curve below frac ½ (needs the k=1 companion arm; above ½ the
-   subject-scaling grid in §3.3 already covers it).
+2. ~~Trial-count scaling curve~~ done (§3.2, with the k=1 companion).
 3. k calibration curve (offline, needs its freeze); Q2 rebuild on `frame_emb`. LOSO done (§1).
 4. OSF pre-registration (must encode the D16 fold-4 confirmation protocol).
