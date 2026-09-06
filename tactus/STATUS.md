@@ -1,4 +1,4 @@
-# TACTUS STATUS  (updated 2026-09-06T04:10Z)
+# TACTUS STATUS  (updated 2026-09-06T09:40Z)
 
 ## Stage: Phase 0 and Phase 1 complete. Baseline ladder complete through rung 5.
 ## Gates: **G0 G1 G2 G3 G4 G5 G6a G6b** passed. G6b was declared at 80 subjects once both
@@ -468,6 +468,7 @@ own paragraphs below because they govern which numbers may leave this repository
 | D27 | **in force, first execution audited** | k=1 primary applied to D25; prereg-before-data order enforced — its first run caught two frozen design errors before any EEG was touched (a dead composite and an A-redundant B1 RDM, appendum 1) and one miscalibrated QC gate | `prereg/` |
 | D28 | **recorded — skeleton is user-owned** | the D23 outcome removes the third beam (touch-semantic alignment); what remains is invariance + volume, content invariance, and the rigor battery. Title does not turn toward touch-semantic. Rearrangement is the user's call | — |
 | D29 | **done** | contrast ceiling computed and reported beside H1 (rule applied above); fhmc_dd audit: the "running" status was stale — 40/40 folds complete, era-homogeneous (6 pre-stamp folds classified correlation-era by their `max_abs_corr` signature; covariance-era folds correctly quarantined), FHMC dd 0.0964 vs ProtoNCE 0.1045, paired −0.0082, p=1e-5, 33/40 folds worse — FHMC loses in both regimes; DECISIONS_NEEDED §3 struck (resolved by D13) | `results/multimodal_rsa_b2/contrast_ceiling.json` |
+| W1 | **done — null on both confirmatory contrasts** | EXPLORATION_PROGRAM_v2 wave 1 (147 units + 5 probes, 0 failures, pre-registered with a 1.5 pp paired-video MDD and a first k=1 ceiling of 0.1039). P1: a live, gradient-carrying codebook (projector trains) vs ProtoNCE's frozen projector: −1.4 pp, CI [−4.1, +1.4] — no detectable cost of the frozen projector (its own per-video SD is 2.5× the calibration's). P2: an affect-only target does not raise material/low-level-partialled affect geometry over a visual-only text target (ρ 0.15 vs 0.11, p=0.29), and neither the early-visual nor the late-affect half of the window dissociation appears. Exploratory: the frozen video target beats every text target by ~1 pp at k=1; affect geometry (ρ≈0.10–0.18) is present under every full-epoch target including video; 200–400 ms is the best single window at 0.068 vs 0.087 full-epoch. The LOVO probe endpoint is disclosed as underpowered (CI ±0.2). Also settled beforehand: the k=1 headroom (~1.6 pp) is no larger than k=4's | `tactus_work/results/w1/W1_RESULTS.md`, `prereg/W1_EXPLORATION_FROZEN.md` |
 
 ## D15 -- the answer, and what may be quoted
 
