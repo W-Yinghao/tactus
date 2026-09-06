@@ -64,6 +64,8 @@ from .protonce import ProtoNCE
 from .rnc import RankNContrast
 from .siglip import SigLIP
 from .softclip import SoftCLIP
+from .codebook_ce import LiveCodebookCE
+import torch
 from .supcon import SupCon
 
 __all__ = [
@@ -98,6 +100,7 @@ __all__ = [
     "SigLIP",
     "RankNContrast",
     "CLISA",
+    "LiveCodebookCE",
     "CompositeLoss",
     "FactorizedFHMC",
     # smoke test
@@ -109,6 +112,17 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # smoke test
 # --------------------------------------------------------------------------- #
+
+def _inject_live_codebook(fn, meta, dim: int):
+    """Losses that declare ``requires_live_codebook`` get a random L2 codebook in
+    the smoke test, standing in for the trainer's live projection."""
+    if getattr(fn, "requires_live_codebook", False) and "codebook" not in meta:
+        gen = torch.Generator().manual_seed(20260906)
+        cb = torch.randn(int(getattr(fn, "n_conditions", 360)), dim, generator=gen)
+        meta = dict(meta)
+        meta["codebook"] = cb / cb.norm(dim=-1, keepdim=True)
+    return meta
+
 
 #: Constructor kwargs used by :func:`selftest` for losses that cannot be built
 #: with no arguments at all (or whose defaults would be slow in a smoke test).
@@ -187,6 +201,7 @@ def term_contributions(names=None, batch_size: int = 256, dim: int = 256,
         if not isinstance(weights, dict) or len(weights) < 2:
             continue  # single-term loss: the question does not arise
         z_eeg, z_vid, meta = make_dummy_batch(seed=0, batch_size=batch_size, dim=dim)
+        meta = _inject_live_codebook(fn, meta, dim)
         logs = fn(z_eeg, z_vid, meta).get("logs", {})
         raw = {k[: -len("/raw")]: float(v) for k, v in logs.items() if k.endswith("/raw")}
         weighted = {k: float(weights.get(k, 0.0)) * v for k, v in raw.items()}
@@ -245,6 +260,7 @@ def selftest(
                 # fresh instance per scenario: ProtoNCE carries bank state
                 fn = _build_for_selftest(name, dim)
                 z_eeg, z_vid, meta = make_dummy_batch(seed=0, **spec)
+                meta = _inject_live_codebook(fn, meta, z_eeg.shape[-1])
                 out = fn(z_eeg, z_vid, meta)
 
                 if not isinstance(out, dict) or "loss" not in out:

@@ -73,8 +73,24 @@ def _descriptions(vtd_path: Path) -> pd.Series:
     return raw.set_index(raw[id_col].astype(int))[desc_col].astype(str).str.strip().str.lower()
 
 
-def build_captions(vtd: pd.DataFrame, descriptions: Optional[pd.Series] = None) -> pd.DataFrame:
-    """One deterministic caption per base video, keyed by ``video_id``."""
+VARIANTS = ("full", "vis", "blind")
+
+
+def build_captions(vtd: pd.DataFrame, descriptions: Optional[pd.Series] = None,
+                   variant: str = "full") -> pd.DataFrame:
+    """One deterministic caption per base video, keyed by ``video_id``.
+
+    ``variant`` (W1 target-space factor, EXPLORATION_PROGRAM_v2 §3 E2):
+
+    - ``full``  -- the D24 caption (description + action + object + material + affect);
+    - ``vis``   -- visual description only: material clause and affect words removed;
+    - ``blind`` -- material-blind: material clause removed and the object noun
+      genericised, affect words kept.  Token-level only: on these stimuli the
+      description column and toucher identity still carry material (D17), so
+      this controls for the explicit material clause, not for material information.
+    """
+    if variant not in VARIANTS:
+        raise ValueError(f"variant must be one of {VARIANTS}, got {variant!r}")
     val_w = _tercile_words(vtd["valence"].to_numpy(float),
                            ("unpleasant", "neutral", "pleasant"))
     thr_w = _tercile_words(vtd["threat"].to_numpy(float),
@@ -93,13 +109,18 @@ def build_captions(vtd: pd.DataFrame, descriptions: Optional[pd.Series] = None) 
         desc = ""
         if descriptions is not None:
             desc = f"{descriptions.loc[int(r['video_id'])]}, "
+        if variant == "blind":
+            toucher = "another person's hand" if r["toucher"] == "hand" else "an object"
+            with_clause = "" if (r["toucher"] == "object" or r["object"] == "hand") else " with an object"
+        material_clause = "" if variant in ("vis", "blind") else f" ({_noun(str(r['material']))} contact)"
         caption = (
             f"a third-person video of a hand: {desc}being {verb} by {toucher}"
-            f"{with_clause} ({_noun(str(r['material']))} contact), {motion}; "
-            f"{val_w[i]}, {thr_w[i]}"
+            f"{with_clause}{material_clause}, {motion}"
         )
-        if float(r["pain"]) >= _PAIN_PCT_THRESHOLD:
-            caption += ", painful"
+        if variant != "vis":
+            caption += f"; {val_w[i]}, {thr_w[i]}"
+            if float(r["pain"]) >= _PAIN_PCT_THRESHOLD:
+                caption += ", painful"
         rows.append({"video_id": int(r["video_id"]), "caption": caption})
     out = pd.DataFrame(rows).sort_values("video_id").reset_index(drop=True)
     out["caption_class"] = out.groupby("caption").ngroup()

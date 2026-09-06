@@ -1,0 +1,24 @@
+# W1 / E2 T-aff: affect-only target -- rank-N-contrast on the 175-rater valence/
+# arousal/threat means (EEG features ordered by label distance). No video target
+# enters, so 18-way video retrieval is expected at chance by construction; the
+# informative endpoints are the affect probes (EXPLORATION_PROGRAM_v2 §3 E2).
+base: default.yaml
+run:
+  name: w1_rnc_affect
+  notes: T-aff arm -- RnC on valence/arousal/threat, EEG feature.
+loss:
+  name: rnc
+  label_key: [valence, arousal, threat]
+  feature: eeg
+  similarity: l2
+  temperature: 2.0
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25

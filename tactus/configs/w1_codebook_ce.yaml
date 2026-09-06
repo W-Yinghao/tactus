@@ -1,0 +1,25 @@
+# W1 / E1a-ii: ProtoNCE's prototype bank made fully live (EXPLORATION_PROGRAM_v2 §3 E1).
+# Every prototype is re-projected with gradient each step (see losses/codebook_ce.py),
+# so the video projector trains -- the symmetric alternative to live_positive, which
+# is the documented shortcut. Same encoder, same temperature ladder as nice_protonce.
+#   python -m tactus.train.run -c configs/w1_codebook_ce.yaml --regime within_subject --folds F
+base: default.yaml
+run:
+  name: w1_codebook_ce
+  notes: live full-codebook cross-entropy; P1 arm against nice_protonce (frozen projector).
+loss:
+  name: codebook_ce
+  granularities: [condition, video]
+  weights: {condition: 1.0, video: 0.5}
+  temperature: 0.04
+  learnable_temperature: true
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25

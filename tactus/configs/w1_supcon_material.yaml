@@ -1,0 +1,23 @@
+# W1 / E2 T-mat: material-only alignment target via multi-positive contrast.
+# Same-material videos are positives (SupCon, cross-modal), otherwise the InfoNCE
+# denominator would push same-class videos apart (EXPLORATION_PROGRAM_v2 §3 E2).
+base: default.yaml
+run:
+  name: w1_supcon_material
+  notes: T-mat arm -- material class is the only alignment signal.
+loss:
+  name: supcon
+  positive_key: material_id
+  mode: cross_modal
+  temperature: 0.1
+  learnable_temperature: true
+model:
+  d_embed: 256
+  subject_conditioning: subject_token
+  eeg:
+    name: nice
+    params:
+      d_model: 256
+      dropout: 0.5
+      n_spatial_filters: 40
+      temporal_kernel: 25

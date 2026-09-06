@@ -519,6 +519,18 @@ class TrialView(Dataset):
 
     # -- loading ------------------------------------------------------------ #
 
+    def set_crop(self, a: int, b: int) -> None:
+        """Restrict every epoch to samples ``[a, b)`` (W1 time-window factor).
+
+        Applied after construction so the constructor contract is untouched;
+        ``n_times`` follows so the encoder is built for the cropped length.
+        """
+        full = int(self.store.n_times)
+        if not (0 <= a < b <= full):
+            raise ValueError(f"crop [{a}, {b}) outside the epoch's {full} samples")
+        self._crop = (int(a), int(b))
+        self.n_times = int(b - a)
+
     def load_x(self, rows: np.ndarray) -> np.ndarray:
         """Average the epochs at dataset rows ``rows`` and normalize.
 
@@ -528,6 +540,9 @@ class TrialView(Dataset):
         rows = np.atleast_1d(np.asarray(rows, dtype=np.int64))
         sid = int(self.subject[rows[0]])
         x = self.store.take(sid, self.within[rows])
+        crop = getattr(self, "_crop", None)
+        if crop is not None:
+            x = x[..., crop[0]:crop[1]]
         x = x.mean(axis=0) if x.shape[0] > 1 else x[0]
         if self.rescale == "sqrt_k" and rows.size > 1:
             x = x * math.sqrt(rows.size)
@@ -1370,6 +1385,15 @@ class Trainer:
         self.ds_train = TrialView(tr, **common)
         self.ds_val = TrialView(va, **common)
         self.ds_test = TrialView(te, **common)
+        crop = _get(cfg, "data.crop_samples", None)
+        if crop is not None:
+            a, b = int(crop[0]), int(crop[1])
+            if int(self.store.n_times) != 120 or self.window != "w0600":
+                raise ValueError("data.crop_samples is defined against the w0600 contract "
+                                 "(120 samples, 0-600 ms at 200 Hz); refusing another window")
+            for ds in (self.ds_train, self.ds_val, self.ds_test):
+                ds.set_crop(a, b)
+            log.info("time crop: samples [%d, %d) = %d-%d ms", a, b, a * 5, b * 5)
         self.n_times = self.ds_train.n_times
         # kept for the step-matched arm: the batch count the *un-subsampled*
         # training split would have produced
@@ -1942,6 +1966,18 @@ class Trainer:
             # 72 near-collinear cosines is exactly where fp16 loses its resolution
             z_eeg = _renorm(z_eeg.float())
             z_vid = _renorm(z_vid.float())
+            if getattr(self.loss_fn, "requires_live_codebook", False):
+                # E1a-ii: every prototype live, with gradient, every step -- the
+                # symmetric alternative to ProtoNCE's stale bank (see
+                # losses/codebook_ce.py).  360 x 768 through the projector is
+                # negligible next to the EEG forward.
+                if not hasattr(self, "_cond_emb_all"):
+                    self._cond_emb_all = torch.as_tensor(
+                        self.video.cond_emb, dtype=torch.float32, device=self.device)
+                with ctx:
+                    cb = self.projector(self._cond_emb_all)
+                meta = dict(meta)
+                meta["codebook"] = _renorm(cb.float())
             out = self.loss_fn(z_eeg, z_vid, meta)
             loss = out["loss"] if isinstance(out, Mapping) else out
             if not torch.isfinite(loss):
